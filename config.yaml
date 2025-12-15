@@ -1,0 +1,75 @@
+# Bot configuration file (do not remove comments; this documents defaults and intent)
+# Safe default values provided. Adjust for production carefully.
+bot:
+  name: "Vini Advanced Quant Engine"
+  mode: "paper"   # paper | trade
+  loop_seconds: 5
+  decision_every_minutes: 1
+
+# Exchange/trading execution related settings
+exchange:
+  recv_window: 5000
+  max_spread_bps: 20
+  price_offset_bps: 5
+  allow_market_for_stop: true
+
+# Trading universe (symbols must match Binance Spot symbol format)
+universe:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    - SOLUSDT
+
+# Momentum (dual-period) parameters
+momentum2:
+  n_days_short: 180
+  n_days_long: 365
+
+# Sentiment model settings
+sentiment:
+  enabled: true
+  decay_half_life_hours: 12
+
+# Economy / signal quality rules
+economy_rules:
+  horizon_minutes: 60
+  ewma_alpha: 0.08
+  min_snr: 0.20
+  min_pwin: 0.55
+  require_ev_positive: true
+
+# Adaptive training / online learning
+adaptive:
+  enabled: true
+  recalibrate_every_minutes: 60
+  lr: 0.10
+  ridge_lambda: 5.0
+  max_train_rows: 2000
+  min_train_rows: 200
+
+# Risk targeting
+risk:
+  target_vol_1d: 0.02
+
+# Positioning rules
+positioning:
+  max_positions: 2
+  weight_per_position: 0.30
+  cash_buffer: 0.40
+
+# Short term shock filters
+short_term_rules:
+  shock_filter:
+    enabled: true
+    z_threshold_1h: 3.0
+    cooldown_hours: 6
+
+# Persistence / storage
+storage:
+  sqlite_path: "bot_state.db"   # sqlite DB (do NOT version .db files)
+
+# Paper trading starting balances
+paper:
+  equity_usdt: 1000
+  usdt_free: 1000
