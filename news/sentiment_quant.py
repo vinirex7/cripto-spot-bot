@@ -3,7 +3,7 @@ Quantitative sentiment scoring without LLM.
 """
 import pandas as pd
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import logging
 
