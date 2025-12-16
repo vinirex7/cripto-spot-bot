@@ -35,6 +35,7 @@ class RiskGuards:
         vol_1d: float,
         illiq: float,
         soft_risk_off: bool = False,
+        current_allocation: float = 0.0,
     ) -> RiskAssessment:
         cfg = self.config.get("risk", {})
         positioning = self.config.get("positioning", {})
@@ -69,7 +70,7 @@ class RiskGuards:
             base_weight *= 0.5
 
         # Cash buffer check
-        if open_positions * base_weight > 1 - cash_buffer:
+        if current_allocation + base_weight > 1 - cash_buffer:
             return RiskAssessment(allow_entry=False, weight=0.0, reason="cash_buffer")
 
         return RiskAssessment(allow_entry=True, weight=base_weight, reason="ok")

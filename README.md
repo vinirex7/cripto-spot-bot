@@ -34,7 +34,7 @@ Configured in `config.yaml`:
 ## How to Run (Paper)
 
 ```bash
-pip install -r requeriments.txt
+pip install -r requirements.txt
 python - <<'PY'
 from bot.core import StrategyMotherEngine
 engine = StrategyMotherEngine("config.yaml")

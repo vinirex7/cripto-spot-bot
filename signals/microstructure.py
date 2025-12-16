@@ -1,7 +1,7 @@
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Deque, Dict, List, Optional
+from typing import Deque, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -89,7 +89,7 @@ class MicrostructureAnalyzer:
             return float(prices.iloc[-1])
         return float((prices * volume).sum() / denom)
 
-    def _illiq_guard(self, symbol: str, prices: pd.Series, volumes: pd.Series) -> (float, float):
+    def _illiq_guard(self, symbol: str, prices: pd.Series, volumes: pd.Series) -> Tuple[float, float]:
         if prices.empty or volumes.empty:
             return 0.0, 1.0
         latest_ret = abs(np.log(prices.iloc[-1] / prices.iloc[-2])) if len(prices) > 1 else 0.0

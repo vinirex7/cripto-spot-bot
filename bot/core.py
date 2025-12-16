@@ -149,6 +149,7 @@ class StrategyMotherEngine:
                 vol_1d=momentum.vol_1d,
                 illiq=micro.illiq,
                 soft_risk_off=shock_state.soft,
+                current_allocation=self.executor.gross_exposure(),
             )
 
             if not micro.entry_allowed or not risk_assessment.allow_entry:

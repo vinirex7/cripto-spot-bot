@@ -83,3 +83,6 @@ class OrderExecutor:
 
     def open_positions_count(self) -> int:
         return len([p for p in self.positions.values() if abs(p) > 0])
+
+    def gross_exposure(self) -> float:
+        return float(sum(abs(v) for v in self.positions.values()))
