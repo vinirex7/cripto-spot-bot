@@ -22,6 +22,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 def load_config(config_path: str = "config.yaml") -> Dict:
+    # Support legacy filename `config.yam` while keeping `config.yaml` as the primary path.
     if not Path(config_path).exists() and Path("config.yam").exists():
         config_path = "config.yam"
     with open(config_path, "r") as f:
@@ -70,7 +71,7 @@ class StrategyMotherEngine:
             df["close"] = df["close"].astype(float)
             df["volume"] = df["volume"].astype(float)
             return df
-        except Exception:
+        except (requests.RequestException, ValueError):
             # Graceful fallback to synthetic data (random walk) to keep the loop alive in paper mode.
             dates = pd.date_range(end=datetime.utcnow(), periods=limit, freq="D")
             steps = np.random.normal(0, 0.01, size=limit)
@@ -84,7 +85,7 @@ class StrategyMotherEngine:
             resp = requests.get(url, params={"symbol": symbol}, timeout=5)
             resp.raise_for_status()
             return resp.json()
-        except Exception:
+        except (requests.RequestException, ValueError):
             return {"bidPrice": 0, "askPrice": 0, "bidQty": 0, "askQty": 0}
 
     def _persist_log(self, payload: Dict):

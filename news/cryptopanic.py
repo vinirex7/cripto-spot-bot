@@ -34,7 +34,7 @@ class CryptoPanicClient:
             resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json().get("results", [])
-        except Exception:
+        except (requests.RequestException, ValueError):
             return []
 
         items: List[NewsItem] = []

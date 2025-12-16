@@ -96,8 +96,9 @@ class MicrostructureAnalyzer:
         if prices.empty or volumes.empty:
             return 0.0, 1.0
         latest_ret = abs(np.log(prices.iloc[-1] / prices.iloc[-2])) if len(prices) > 1 else 0.0
-        latest_vol = float(volumes.iloc[-1]) if len(volumes) else 1.0
-        illiq = latest_ret / max(latest_vol, 1e-9)
+        latest_vol = max(float(volumes.iloc[-1]) if len(volumes) else 1.0, 1e-4)
+        illiq = latest_ret / latest_vol
+        illiq = min(illiq, 1e3)
         self._update_history(self.illiq_history, symbol, illiq, horizon_hours=24 * 30)
         illiq_values = [v for _, v in self.illiq_history.get(symbol, [])]
         if not illiq_values:

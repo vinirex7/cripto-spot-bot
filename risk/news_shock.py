@@ -30,8 +30,11 @@ class NewsShockEngine:
         returns = np.log(prices / prices.shift(1)).dropna()
         if returns.empty:
             return 0.0, 1.0
+        start_price = prices.iloc[0]
+        if start_price == 0:
+            return 0.0, 1.0
 
-        ret_1h = float((prices.iloc[-1] / prices.iloc[0]) - 1)
+        ret_1h = float((prices.iloc[-1] / start_price) - 1)
         vol_1h = float(returns.ewm(alpha=0.2).std().iloc[-1]) if len(returns) > 1 else float(returns.std(ddof=1))
         vol_1h = max(vol_1h, 1e-6)
 

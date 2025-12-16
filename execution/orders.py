@@ -66,6 +66,10 @@ class OrderExecutor:
             if live:
                 self.open_orders[client_id] = live
                 return live
+            raise RuntimeError(
+                "Live trading mode enabled but no signed order implementation is available. "
+                "Provide credentials and implement signed order placement before enabling trade mode."
+            )
 
         # Paper mode bookkeeping
         self.open_orders[client_id] = order

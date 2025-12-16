@@ -72,7 +72,8 @@ def compute_momentum_signals(prices: pd.Series, config: Dict) -> MomentumResult:
     m12 = m12_raw * age_factor
     delta_m = m6 - m12
 
-    cumulative_return = float((prices.iloc[-1] / prices.iloc[0]) - 1) if len(prices) > 1 else 0.0
+    base_price = prices.iloc[0] if len(prices) else 0.0
+    cumulative_return = float((prices.iloc[-1] / base_price) - 1) if len(prices) > 1 and base_price != 0 else 0.0
 
     long_bias = m12 > 0 and m6 > 0 and delta_m > 0
     risk_off = m6 < 0 and m12 < 0
