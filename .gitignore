@@ -1,5 +1,11 @@
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.sqlite
+*.db
+logs/
+*.jsonl
 *.db
 .env
 .venv
