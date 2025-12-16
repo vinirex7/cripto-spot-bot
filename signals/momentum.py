@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -35,7 +35,7 @@ def _momentum_score(returns: pd.Series) -> float:
     return float(returns.sum() / vol)
 
 
-def _age_discount(days: int, buckets) -> float:
+def _age_discount(days: int, buckets: List[Dict[str, float]]) -> float:
     for bucket in buckets:
         if days <= bucket.get("max_days", 0):
             return float(bucket.get("factor", 1.0))

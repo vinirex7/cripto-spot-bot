@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -9,7 +9,7 @@ class RiskAssessment:
     weight: float
     reason: str
     exit_all: bool = False
-    pause_until: datetime = None
+    pause_until: Optional[datetime] = None
 
 
 class RiskGuards:

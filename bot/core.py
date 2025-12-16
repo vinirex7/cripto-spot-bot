@@ -74,8 +74,10 @@ class StrategyMotherEngine:
         except (requests.RequestException, ValueError):
             # Graceful fallback to synthetic data (random walk) to keep the loop alive in paper mode.
             dates = pd.date_range(end=datetime.utcnow(), periods=limit, freq="D")
-            steps = np.random.normal(0, 0.01, size=limit)
-            prices = 100 * np.exp(np.cumsum(steps))
+            price_seed = float(self.config.get("bot", {}).get("synthetic_price_start", 100))
+            vol = float(self.config.get("bot", {}).get("synthetic_price_vol", 0.01))
+            steps = np.random.normal(0, vol, size=limit)
+            prices = price_seed * np.exp(np.cumsum(steps))
             logger.warning("Using synthetic price fallback for %s (%s)", symbol, interval)
             return pd.DataFrame({"close": prices, "volume": [1.0] * limit})
 

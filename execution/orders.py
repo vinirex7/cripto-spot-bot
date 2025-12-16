@@ -27,6 +27,10 @@ class OrderExecutor:
         self.open_orders: Dict[str, Order] = {}
         self.positions: Dict[str, float] = {}
         self._client_seq = itertools.count(1)
+        self.api_key = os.getenv("BINANCE_API_KEY")
+        self.api_secret = os.getenv("BINANCE_API_SECRET")
+        if self.mode == "trade" and (not self.api_key or not self.api_secret):
+            raise RuntimeError("Trade mode requires BINANCE_API_KEY and BINANCE_API_SECRET environment variables.")
 
     def _client_order_id(self, symbol: str, side: str) -> str:
         return f"{symbol}-{side}-{next(self._client_seq)}"
@@ -35,8 +39,8 @@ class OrderExecutor:
         # Placeholder live order via Binance API if credentials exist.
         # A production implementation must sign requests, handle errors/retries,
         # and parse responses to ensure orders are acknowledged or rejected deterministically.
-        api_key = os.getenv("BINANCE_API_KEY")
-        api_secret = os.getenv("BINANCE_API_SECRET")
+        api_key = self.api_key
+        api_secret = self.api_secret
         if not api_key or not api_secret:
             return None
         # A full signed implementation is intentionally omitted for safety in this scaffold.

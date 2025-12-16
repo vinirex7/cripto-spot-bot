@@ -3,6 +3,8 @@ bot:
   mode: "paper"                 # paper | trade
   loop_seconds: 60
   decision_every_minutes: 15
+  synthetic_price_start: 100
+  synthetic_price_vol: 0.01
   log_dir: "./logs"
 
 exchange:
@@ -99,6 +101,7 @@ news:
 microstructure:
   ofi_z_entry: 2.0
   ofi_z_risk_on: 1.5
+  fallback_volume: 1.0
 
 risk_overrides:
   target_vol_1d: 0.012
