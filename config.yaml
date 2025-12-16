@@ -1,0 +1,106 @@
+bot:
+  name: "Vini-Cripto-Spot-Bot"
+  mode: "paper"   # paper | trade
+  loop_seconds: 60
+  decision_every_minutes: 15
+  log_dir: "./logs"
+
+exchange:
+  base_url: "https://api.binance.com"
+  recv_window: 5000
+  order_type: "LIMIT"
+  limit_ttl_seconds: 20
+  price_offset_bps: 3
+  max_spread_bps: 8
+  allow_market_for_stop: true
+
+universe:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    - SOLUSDT
+    - LINKUSDT
+    - AVAXUSDT
+    - MATICUSDT
+    - ADAUSDT
+
+positioning:
+  max_positions: 2
+  weight_per_position: 0.30
+  cash_buffer: 0.40
+
+momentum:
+  n_days_short: 182
+  n_days_long: 365
+  age_days_buckets:
+    - {max_days: 365, factor: 1.00}
+    - {max_days: 456, factor: 0.75}
+    - {max_days: 547, factor: 0.50}
+    - {max_days: 9999, factor: 0.25}
+
+# Legacy momentum (dual-period) parameters kept for compatibility
+momentum2:
+  n_days_short: 180
+  n_days_long: 365
+
+news:
+  sentz_hard: -3.0
+  priceshockz_hard: -3.0
+  ns_hard: -2.5
+  ns_soft: -1.5
+  volspike_soft: 1.5
+  volspike_hard: 1.8
+  cooldown_hours_hard: 6
+
+microstructure:
+  ofi_z_entry: 2.0
+  ofi_z_risk_on: 1.5
+  fallback_volume: 1.0
+
+risk:
+  target_vol_1d: 0.012
+  max_positions: 2
+  weight_per_position: 0.30
+  cash_buffer: 0.40
+  daily_drawdown_pause: 0.025
+  max_holding_hours: 72
+  illiq_size_discount: 0.5
+
+sentiment:
+  enabled: true
+  provider: "cryptopanic"
+  decay_half_life_hours: 12
+  trusted_sources:
+    - coindesk
+    - cointelegraph
+    - reuters
+    - bloomberg
+
+economy_rules:
+  horizon_minutes: 60
+  ewma_alpha: 0.08
+  min_snr: 0.20
+  min_pwin: 0.55
+  require_ev_positive: true
+
+adaptive:
+  enabled: true
+  recalibrate_every_minutes: 60
+  lr: 0.10
+  ridge_lambda: 5.0
+  max_train_rows: 2000
+  min_train_rows: 200
+
+short_term_rules:
+  shock_filter:
+    enabled: true
+    z_threshold_1h: 3.0
+    cooldown_hours: 6
+
+storage:
+  sqlite_path: "./bot.db"
+
+paper:
+  equity_usdt: 1000
+  usdt_free: 1000
