@@ -85,6 +85,7 @@ def compute_momentum_signals(prices: pd.Series, config: Dict) -> MomentumResult:
         m6=m6,
         m12=m12,
         delta_m=delta_m,
+        # When daily vol collapses (e.g., synthetic feed), fall back to momentum magnitude to avoid divide-by-zero.
         vol_1d=vol_1d if vol_1d > 0 else max(abs(m6_raw), abs(m12_raw), 1e-6),
         long_bias=long_bias,
         risk_off=risk_off,

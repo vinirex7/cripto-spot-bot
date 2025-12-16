@@ -66,7 +66,9 @@ class CryptoPanicClient:
             score += 0.5
         if "bearish" in tags:
             score -= 0.5
-        trusted_sources = ["coindesk", "cointelegraph", "reuters", "bloomberg"]
+        trusted_sources = self.config.get("sentiment", {}).get(
+            "trusted_sources", ["coindesk", "cointelegraph", "reuters", "bloomberg"]
+        )
         if source and source.lower() in trusted_sources:
             score *= 1.1
         return max(min(score, 1.0), -1.0)

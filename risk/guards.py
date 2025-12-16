@@ -24,6 +24,10 @@ class RiskGuards:
             self.daily_start = today
             self.daily_pnl = 0.0
 
+    def _next_utc_day_start(self) -> datetime:
+        base = datetime.now(timezone.utc)
+        return base.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+
     def register_pnl(self, pnl: float):
         self._reset_if_new_day()
         self.daily_pnl += pnl
@@ -52,8 +56,7 @@ class RiskGuards:
                 weight=0.0,
                 reason="daily_drawdown_pause",
                 exit_all=True,
-                pause_until=datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-                + timedelta(days=1),
+                pause_until=self._next_utc_day_start(),
             )
 
         if open_positions >= max_positions:

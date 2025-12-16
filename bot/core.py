@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List
 
+import numpy as np
 import pandas as pd
 import requests
 import yaml
@@ -70,10 +71,12 @@ class StrategyMotherEngine:
             df["volume"] = df["volume"].astype(float)
             return df
         except Exception:
-            # Graceful fallback to synthetic data
+            # Graceful fallback to synthetic data (random walk) to keep the loop alive in paper mode.
             dates = pd.date_range(end=datetime.utcnow(), periods=limit, freq="D")
-            prices = pd.Series(range(1, limit + 1), index=dates)
-            return pd.DataFrame({"close": prices.values, "volume": [1.0] * limit})
+            steps = np.random.normal(0, 0.01, size=limit)
+            prices = 100 * np.exp(np.cumsum(steps))
+            logger.warning("Using synthetic price fallback for %s (%s)", symbol, interval)
+            return pd.DataFrame({"close": prices, "volume": [1.0] * limit})
 
     def _fetch_book_ticker(self, symbol: str) -> Dict:
         url = f"{self.config.get('exchange', {}).get('base_url', 'https://api.binance.com')}/api/v3/ticker/bookTicker"

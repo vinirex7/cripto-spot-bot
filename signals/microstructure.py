@@ -7,6 +7,9 @@ import numpy as np
 import pandas as pd
 
 
+FALLBACK_VOLUME_SERIES = pd.Series([1.0, 1.0])
+
+
 @dataclass
 class MicrostructureResult:
     entry_allowed: bool
@@ -122,9 +125,9 @@ class MicrostructureAnalyzer:
         vwap = self._vwap(price_window.tail(60))
         last_price = float(price_window["close"].iloc[-1])
 
-        illiq, size_multiplier = self._illiq_guard(
-            symbol, price_window["close"].tail(2), price_window["volume"].tail(2) if "volume" in price_window else pd.Series([1, 1])
-        )
+        volumes = price_window["volume"].tail(2) if "volume" in price_window else FALLBACK_VOLUME_SERIES
+        # Use a tiny positive fallback volume to keep Amihud guard stable when no volume is supplied.
+        illiq, size_multiplier = self._illiq_guard(symbol, price_window["close"].tail(2), volumes)
 
         entry_threshold = self.config.get("microstructure", {}).get("ofi_z_entry", 2.0)
         if risk_on:

@@ -32,7 +32,9 @@ class OrderExecutor:
         return f"{symbol}-{side}-{next(self._client_seq)}"
 
     def _place_live_order(self, symbol: str, side: str, qty: float, price: float, allow_market: bool = False) -> Optional[Order]:
-        # Placeholder live order via Binance API if credentials exist
+        # Placeholder live order via Binance API if credentials exist.
+        # A production implementation must sign requests, handle errors/retries,
+        # and parse responses to ensure orders are acknowledged or rejected deterministically.
         api_key = os.getenv("BINANCE_API_KEY")
         api_secret = os.getenv("BINANCE_API_SECRET")
         if not api_key or not api_secret:

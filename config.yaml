@@ -64,6 +64,11 @@ sentiment:
   enabled: true
   provider: "cryptopanic"
   decay_half_life_hours: 12
+  trusted_sources:
+    - coindesk
+    - cointelegraph
+    - reuters
+    - bloomberg
 
 storage:
   sqlite_path: "./bot.db"
