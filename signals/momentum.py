@@ -133,13 +133,9 @@ class MomentumSignal:
         # Calculate age factor
         M_age_factor = self.get_age_factor(df)
         
-        # Calculate delta M (change in momentum)
-        # Use short-term momentum change
-        if len(df) >= self.short_window + 5:
-            M_short_prev = self.calculate_momentum(df.iloc[:-5], self.short_window)
-            delta_M = M_short - M_short_prev
-        else:
-            delta_M = 0.0
+        # Calculate delta M (acceleration: M_short - M_long)
+        # This measures the difference between short and long momentum
+        delta_M = M_short - M_long
         
         # Calculate SMA
         sma50 = df['close'].tail(self.sma_window).mean()

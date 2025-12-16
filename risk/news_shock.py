@@ -3,6 +3,8 @@ NewsShock v3: Combined sentiment and price shock analysis.
 """
 import pandas as pd
 import numpy as np
+import json
+import os
 from typing import Dict, Optional
 from datetime import datetime, timedelta
 import logging
@@ -48,9 +50,17 @@ class NewsShockV3:
         self.soft_pause_duration_hours = soft_pause.get('duration_hours', 3)
         self.soft_pause_threshold = soft_pause.get('ns_v3_threshold', -1.2)
         
-        # Pause state
+        # Pause state persistence
+        storage_config = config.get('storage', {})
+        self.pause_state_file = os.path.join(
+            os.path.dirname(storage_config.get('positions_db_path', './state/positions.sqlite')),
+            'pause_state.json'
+        )
+        
+        # Load pause state from disk
         self.pause_until: Dict[str, datetime] = {}
         self.pause_reasons: Dict[str, str] = {}
+        self._load_pause_state()
     
     def calculate_sent_llm(
         self,
@@ -59,6 +69,51 @@ class NewsShockV3:
     ) -> float:
         """Calculate SentLLM = sentiment * confidence."""
         return sentiment * confidence
+    
+    def _load_pause_state(self):
+        """Load pause state from disk."""
+        if not os.path.exists(self.pause_state_file):
+            logger.info("No pause state file found, starting fresh")
+            return
+        
+        try:
+            with open(self.pause_state_file, 'r') as f:
+                state = json.load(f)
+            
+            # Convert ISO timestamps back to datetime
+            for symbol, data in state.items():
+                pause_until_str = data.get('pause_until')
+                if pause_until_str:
+                    self.pause_until[symbol] = datetime.fromisoformat(pause_until_str)
+                    self.pause_reasons[symbol] = data.get('reason', 'Unknown')
+            
+            logger.info(f"Loaded {len(self.pause_until)} active pauses from state")
+        
+        except Exception as e:
+            logger.error(f"Failed to load pause state: {e}")
+    
+    def _save_pause_state(self):
+        """Save pause state to disk."""
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.pause_state_file), exist_ok=True)
+            
+            # Convert to serializable format
+            state = {}
+            for symbol, pause_until in self.pause_until.items():
+                state[symbol] = {
+                    'pause_until': pause_until.isoformat(),
+                    'reason': self.pause_reasons.get(symbol, 'Unknown')
+                }
+            
+            # Write to file
+            with open(self.pause_state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+            
+            logger.debug(f"Saved pause state with {len(state)} entries")
+        
+        except Exception as e:
+            logger.error(f"Failed to save pause state: {e}")
     
     def calculate_sent_comb(
         self,
@@ -159,6 +214,9 @@ class NewsShockV3:
             self.pause_until[symbol] = pause_until
             self.pause_reasons[symbol] = f"HARD_PAUSE: {category} news (conf={confidence:.2f}, sent_llm={sent_llm:.2f})"
             
+            # Persist to disk
+            self._save_pause_state()
+            
             logger.warning(f"Hard pause triggered for {symbol} until {pause_until}: {category}")
             return True
         
@@ -189,6 +247,9 @@ class NewsShockV3:
             self.pause_until[symbol] = pause_until
             self.pause_reasons[symbol] = f"SOFT_PAUSE: NS_v3={ns_v3:.2f}"
             
+            # Persist to disk
+            self._save_pause_state()
+            
             logger.warning(f"Soft pause triggered for {symbol} until {pause_until}")
             return True
         
@@ -215,6 +276,10 @@ class NewsShockV3:
             del self.pause_until[symbol]
             if symbol in self.pause_reasons:
                 del self.pause_reasons[symbol]
+            
+            # Save updated state
+            self._save_pause_state()
+            
             logger.info(f"Pause expired for {symbol}")
             return False
         

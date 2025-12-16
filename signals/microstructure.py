@@ -281,8 +281,8 @@ class MicrostructureSignals:
             ofi_zscore = self.calculate_ofi_zscore(ofi_history)
             ofi_ok = self.check_ofi_guard(ofi_zscore)
         
-        # VWAP
-        vwap = self.calculate_vwap(df_1h.tail(24))  # Last 24 hours
+        # VWAP (1h only as per spec)
+        vwap = self.calculate_vwap(df_1h.tail(1))  # Last 1 hour
         vwap_ok = self.check_vwap_guard(current_price, vwap)
         
         # Amihud

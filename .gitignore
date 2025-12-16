@@ -37,6 +37,7 @@ state/
 *.sqlite
 *.sqlite-journal
 *.db
+pause_state.json
 
 # Logs
 logs/

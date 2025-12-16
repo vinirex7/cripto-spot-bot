@@ -207,6 +207,22 @@ class BotCore:
         
         regime_metrics = self.regime_detector.detect_regime(df_btc_1d, alt_dfs)
         
+        # Check if regime blocks trading (effective risk reduction)
+        if regime_metrics.get('block_trading', False):
+            logger.warning(f"{symbol}: High correlation regime detected - blocking trades")
+            
+            # Force exit existing position if any
+            if symbol in open_positions:
+                self._force_exit_position(
+                    symbol, open_positions[symbol], current_price, 
+                    'High correlation regime exit'
+                )
+            
+            self.log_writer.log_decision(
+                symbol, 'blocked', 'High correlation regime', {'regime': regime_metrics}
+            )
+            return  # Block new entries
+        
         # 7. News analysis
         news_items = news_by_symbol.get(symbol, [])
         news_metrics = self._analyze_news(symbol, news_items, df_1h, current_time)
