@@ -1,11 +1,9 @@
 bot:
   name: "Vini-Cripto-Spot-Bot"
-  mode: "paper"  # paper | trade
+  mode: "paper"   # paper | trade
   loop_seconds: 60
   decision_every_minutes: 15
   log_dir: "./logs"
-  synthetic_price_start: 100
-  synthetic_price_vol: 0.01
 
 exchange:
   base_url: "https://api.binance.com"
@@ -18,14 +16,14 @@ exchange:
 
 universe:
   symbols:
-    - "BTCUSDT"
-    - "ETHUSDT"
-    - "BNBUSDT"
-    - "SOLUSDT"
-    - "LINKUSDT"
-    - "AVAXUSDT"
-    - "MATICUSDT"
-    - "ADAUSDT"
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    - SOLUSDT
+    - LINKUSDT
+    - AVAXUSDT
+    - MATICUSDT
+    - ADAUSDT
 
 positioning:
   max_positions: 2
@@ -33,8 +31,8 @@ positioning:
   cash_buffer: 0.40
 
 momentum:
-  n_days_short: 182  # ~6m
-  n_days_long: 365   # ~12m
+  n_days_short: 182
+  n_days_long: 365
   age_days_buckets:
     - {max_days: 365, factor: 1.00}
     - {max_days: 456, factor: 0.75}

@@ -62,3 +62,4 @@ Daily JSONL logs are written to `./logs/YYYY-MM-DD-signals.jsonl` with fields:
 - timestamp, symbol, M6, M12, ΔM, OFI\_z, SentZ, NS, regime, risk\_state, action.
 
 These logs are paper-safe and contain no credentials.
+

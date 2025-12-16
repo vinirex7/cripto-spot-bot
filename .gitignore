@@ -6,3 +6,32 @@ __pycache__/
 *.db
 logs/
 *.jsonl
+*.db
+.env
+.venv
+.env.*
+.DS_Store
+.idea/
+.vscode/
+# Local config
+local_settings.py
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual environment
+.venv/
+
+# SQLite DB
+*.db
+
+# Environment variables
+.env
+.env.*
