@@ -1,0 +1,11 @@
+# Vini QuantBot v3.0.1 - Python Dependencies
+# Python 3.10+ required
+
+openai>=1.0.0
+requests>=2.31.0
+pyyaml>=6.0
+pandas>=2.0.0
+numpy>=1.24.0
+websocket-client==1.8.0
+tenacity>=8.2.0
+python-dateutil>=2.8.0

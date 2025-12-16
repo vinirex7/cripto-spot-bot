@@ -1,0 +1,223 @@
+# Vini QuantBot v3.0.1 Configuration
+
+# ============================================================================
+# UNIVERSE (FIXED - Do not list pairs automatically)
+# ============================================================================
+universe:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - LINKUSDT
+  - AVAXUSDT
+  - ADAUSDT
+
+# ============================================================================
+# HISTORY
+# ============================================================================
+history:
+  lookback_days_1d: 420  # >= 420 days (≥ 12 months)
+  lookback_days_1h: 120  # >= 120 days
+  db_path: ./state/marketdata.sqlite
+
+# ============================================================================
+# MOMENTUM 2.0 (CANONICAL)
+# ============================================================================
+momentum:
+  # Lookback windows (in days)
+  short_window: 60
+  mid_window: 90
+  long_window: 120
+  
+  # Simple Moving Average
+  sma_window: 50
+  
+  # Age-based decay (in months)
+  # 0-12m → 1.00
+  # 12-15m → 0.75
+  # 15-18m → 0.50
+  # 18m+ → 0.25
+  age_decay:
+    excellent: 12  # months, factor 1.00
+    good: 15       # months, factor 0.75
+    fair: 18       # months, factor 0.50
+    poor: 999      # months+, factor 0.25
+  
+  # Entry conditions
+  entry:
+    min_age_factor: 0.5    # M_age >= 0.5
+    min_delta_m: 0.0       # ΔM >= 0
+  
+  # Exit conditions
+  exit:
+    max_age_factor: 0.0    # M_age < 0
+    max_delta_m_days: 3    # ΔM < 0 for X days
+    use_sma_exit: true     # Exit if P < SMA50
+
+# ============================================================================
+# BOOTSTRAP GATE (NEW v3.0.1)
+# Apply ONLY to 1d series
+# ============================================================================
+bootstrap:
+  enabled: true
+  block_size_days: 7     # Range: 5-10
+  n_resamples: 400
+  min_pwin: 0.60         # Minimum P(M > 0)
+  # Metrics calculated: p_win_mom, M_p05, mean, std
+  # Stability = 1 - std(M_boot) / |mean(M_boot)|
+
+# ============================================================================
+# MICROSTRUCTURE
+# ============================================================================
+microstructure:
+  # Spread guard (basis points)
+  spread_max_bps: 12
+  
+  # Order Flow Imbalance (OFI)
+  ofi:
+    z_score_max: 3.0
+  
+  # VWAP guard (1h)
+  vwap:
+    max_deviation_pct: 1.5  # |P - VWAP| / VWAP > 1.5%
+  
+  # Amihud illiquidity
+  amihud:
+    use_p95_threshold: true  # Block if above historical p95
+
+# ============================================================================
+# REGIME
+# ============================================================================
+regime:
+  # Correlation BTC vs alts
+  corr_window_short: 7   # days
+  corr_window_long: 30   # days
+  
+  # Block condition
+  corr_threshold: 0.75
+  vol_ratio_threshold: 1.0  # vol_7d > vol_30d
+
+# ============================================================================
+# RISK
+# ============================================================================
+risk:
+  # Volatility targeting
+  target_vol_1d: 0.012  # 1.2%
+  
+  # Position limits
+  max_positions: 2
+  weight_per_position_max: 0.30  # 30%
+  cash_buffer_min: 0.40          # 40% minimum cash
+  
+  # Drawdown control
+  daily_drawdown_pause_pct: 2.5  # 2.5%
+  
+  # Holding period
+  max_holding_hours: 72
+
+# ============================================================================
+# NEWS (CryptoPanic)
+# ============================================================================
+news:
+  enabled: true
+  cryptopanic_url: https://cryptopanic.com/api/v1/posts/
+  fetch_interval_minutes: 10
+  half_life_hours: 12
+  baseline_window_days: 30
+
+# ============================================================================
+# OPENAI
+# ============================================================================
+openai:
+  enabled: true
+  model: gpt-4o-mini
+  fallback_model: gpt-4o-mini
+  mode: low_cost  # off | low_cost | full
+  temperature: 0.0
+  max_output_tokens: 220
+  max_calls_per_hour: 30
+  cache_ttl_seconds: 1800
+  json_strict: true
+  fail_policy: fail_closed  # fail_closed | fail_open
+
+# ============================================================================
+# NEWS SHOCK v3
+# ============================================================================
+news_shock:
+  # SentLLM = sentiment * confidence
+  # SentComb = 0.7*SentZ + 0.3*SentLLM
+  # PriceShockZ_1h = ret_1h / vol_1h(EWMA)
+  # NS_v3 = 0.6*SentComb - 0.4*PriceShockZ_1h
+  
+  weight_sent_comb: 0.6
+  weight_price_shock: 0.4
+  weight_sent_z: 0.7
+  weight_sent_llm: 0.3
+  
+  # Hard pause (6h)
+  hard_pause:
+    duration_hours: 6
+    min_confidence: 0.65
+    max_sent_llm: -0.5
+    critical_categories:
+      - regulation
+      - hack
+      - bankruptcy
+      - delisting
+  
+  # Soft pause (1-3h)
+  soft_pause:
+    duration_hours: 3
+    ns_v3_threshold: -1.2
+
+# ============================================================================
+# DYNAMIC PARAMS (GUARDRAILS)
+# LLM can ONLY suggest risk-reducing adjustments with TTL
+# ============================================================================
+dynamic_params:
+  enabled: true
+  ttl_minutes: 180
+  
+  # Allowed adjustments (only risk-reducing)
+  allowed:
+    cooldown_max_multiplier: 3.0      # Can increase up to 3x
+    weight_reduction_max_pct: 50      # Can reduce up to 50%
+    target_vol_reduction_max_pct: 50  # Can reduce up to 50%
+    max_positions_can_reduce: true
+    spread_guard_can_increase: true
+  
+  # Never allowed
+  forbidden:
+    - increase_position_size
+    - reduce_spread_guard
+    - increase_target_vol
+    - increase_max_positions
+
+# ============================================================================
+# EXECUTION
+# ============================================================================
+execution:
+  default_order_type: LIMIT
+  use_market_on_risk_exit: true  # Only use MARKET on risk exits
+  limit_order_timeout_seconds: 30
+  binance_base_url: https://api.binance.com
+
+# ============================================================================
+# SCHEDULER
+# ============================================================================
+scheduler:
+  interval_minutes: 15
+  use_slot_deduplication: true  # Prevents duplicate executions
+
+# ============================================================================
+# STORAGE
+# ============================================================================
+storage:
+  positions_db_path: ./state/positions.sqlite
+  log_path: ./logs/bot.jsonl
+  create_dirs: true
+
+# ============================================================================
+# MODE
+# ============================================================================
+mode: paper  # paper | live
