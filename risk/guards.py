@@ -48,6 +48,7 @@ class RiskGuards:
         cash_buffer = cfg.get("cash_buffer", positioning.get("cash_buffer", 0.40))
         target_vol = cfg.get("target_vol_1d", 0.012)
         daily_drawdown_pause = cfg.get("daily_drawdown_pause", 0.025)
+        illiq_discount = cfg.get("illiq_size_discount", 0.5)
 
         self._reset_if_new_day()
         if self.daily_pnl <= -abs(daily_drawdown_pause) * portfolio_value:
@@ -67,7 +68,7 @@ class RiskGuards:
 
         # Liquidity adjustment
         if illiq > 0:
-            base_weight *= 0.5
+            base_weight *= illiq_discount
 
         if soft_risk_off:
             base_weight *= 0.5

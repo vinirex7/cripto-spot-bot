@@ -24,6 +24,7 @@ class MicrostructureAnalyzer:
         self.last_book: Dict[str, Dict] = {}
         self.illiq_history: Dict[str, Deque] = {}
         self.fallback_volume = float(self.config.get("microstructure", {}).get("fallback_volume", 1.0))
+        self.fallback_volume_series = pd.Series([self.fallback_volume, self.fallback_volume])
 
     def _zscore(self, values: List[float]) -> float:
         if not values:
@@ -124,9 +125,7 @@ class MicrostructureAnalyzer:
         vwap = self._vwap(price_window.tail(60))
         last_price = float(price_window["close"].iloc[-1])
 
-        volumes = price_window["volume"].tail(2) if "volume" in price_window else pd.Series(
-            [self.fallback_volume, self.fallback_volume]
-        )
+        volumes = price_window["volume"].tail(2) if "volume" in price_window else self.fallback_volume_series
         # Use a small configurable fallback volume to keep Amihud guard stable when no volume is supplied.
         illiq, size_multiplier = self._illiq_guard(symbol, price_window["close"].tail(2), volumes)
 

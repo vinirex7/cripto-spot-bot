@@ -1,3 +1,4 @@
+# Legacy configuration file kept for backward compatibility. Prefer config.yaml.
 bot:
   name: "Vini-Cripto-Spot-Bot"
   mode: "paper"                 # paper | trade
@@ -83,8 +84,13 @@ economy_rules:
 
 risk:
   max_loss_per_trade: -0.022
-  max_holding_hours: 168
-  daily_drawdown_pause: -0.04
+  max_holding_hours: 72
+  daily_drawdown_pause: 0.025
+  target_vol_1d: 0.012
+  max_positions: 2
+  weight_per_position: 0.30
+  cash_buffer: 0.40
+  illiq_size_discount: 0.5
 
 storage:
   sqlite_path: "./bot.db"
@@ -102,11 +108,3 @@ microstructure:
   ofi_z_entry: 2.0
   ofi_z_risk_on: 1.5
   fallback_volume: 1.0
-
-risk_overrides:
-  target_vol_1d: 0.012
-  max_positions: 2
-  weight_per_position: 0.30
-  cash_buffer: 0.40
-  daily_drawdown_pause: 0.025
-  max_holding_hours: 72

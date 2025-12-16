@@ -62,6 +62,7 @@ risk:
   cash_buffer: 0.40
   daily_drawdown_pause: 0.025
   max_holding_hours: 72
+  illiq_size_discount: 0.5
 
 sentiment:
   enabled: true
