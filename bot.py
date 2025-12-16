@@ -1,7 +1,5 @@
 import yaml
 import time
-import requests
-from websocket import create_connection
 
 def main():
     # Load configuration

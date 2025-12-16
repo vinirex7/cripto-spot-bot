@@ -56,6 +56,7 @@ secrets.json
 
 # Logs
 *.log
+*.jsonl
 logs/
 log/
 
