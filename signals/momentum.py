@@ -141,10 +141,20 @@ class MomentumSignal:
         sma50 = df['close'].tail(self.sma_window).mean()
         current_price = df['close'].iloc[-1]
         
-        # Generate signal
-        signal = self._generate_signal(
-            M_age_factor, delta_M, current_price, sma50
-        )
+        
+        
+        # Bootstrap validation
+bootstrap_metrics = self.block_bootstrap(df)
+
+# Generate raw signal
+signal = self._generate_signal(
+    M_age_factor, delta_M, current_price, sma50
+)
+
+# Apply bootstrap gate (BLOCK ENTRY)
+if signal == 1 and not self.check_bootstrap_gate(bootstrap_metrics):
+    signal = 0
+
         
         return {
             'M_short': M_short,
@@ -154,6 +164,7 @@ class MomentumSignal:
             'delta_M': delta_M,
             'sma50': sma50,
             'current_price': current_price,
+            'bootstrap': bootstrap_metrics,
             'signal': signal
         }
     
