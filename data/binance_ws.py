@@ -1,5 +1,5 @@
 """
-Binance WebSocket client for real-time market data.
+Binance WebSocket client for real-time market data with auto-reconnection.
 """
 import json
 import logging
@@ -12,14 +12,20 @@ logger = logging.getLogger(__name__)
 
 
 class BinanceWebSocketClient:
-    """WebSocket client for real-time Binance market data."""
+    """WebSocket client for real-time Binance market data with auto-reconnection."""
     
-    def __init__(self, base_url: str = "wss://stream.binance.com:9443/ws"):
+    def __init__(self, base_url: str = "wss://stream.binance.com:9443/ws", auto_reconnect: bool = True):
         self.base_url = base_url
         self.ws: Optional[websocket.WebSocketApp] = None
         self.thread: Optional[threading.Thread] = None
         self.callbacks: Dict[str, Callable] = {}
         self.running = False
+        self.auto_reconnect = auto_reconnect
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 10
+        self.reconnect_delay = 5  # seconds
+        self.ws_healthy = True
+        self.last_message_time = time.time()
     
     def subscribe_ticker(self, symbol: str, callback: Callable[[Dict], None]):
         """Subscribe to ticker updates for a symbol."""
@@ -39,6 +45,10 @@ class BinanceWebSocketClient:
     def _on_message(self, ws, message: str):
         """Handle incoming WebSocket messages."""
         try:
+            self.last_message_time = time.time()
+            self.ws_healthy = True
+            self.reconnect_attempts = 0  # Reset on successful message
+            
             data = json.loads(message)
             stream = data.get("stream", "")
             
@@ -52,11 +62,18 @@ class BinanceWebSocketClient:
     def _on_error(self, ws, error):
         """Handle WebSocket errors."""
         logger.error(f"WebSocket error: {error}")
+        self.ws_healthy = False
     
     def _on_close(self, ws, close_status_code, close_msg):
-        """Handle WebSocket close."""
+        """Handle WebSocket close with auto-reconnect."""
         logger.info(f"WebSocket closed: {close_status_code} - {close_msg}")
-        self.running = False
+        self.ws_healthy = False
+        
+        # Auto-reconnect if enabled and still running
+        if self.auto_reconnect and self.running:
+            self._attempt_reconnect()
+        else:
+            self.running = False
     
     def _on_open(self, ws):
         """Handle WebSocket open."""
@@ -97,6 +114,7 @@ class BinanceWebSocketClient:
     
     def stop(self):
         """Stop the WebSocket connection."""
+        self.auto_reconnect = False  # Disable reconnection on manual stop
         if self.ws and self.running:
             self.ws.close()
             self.running = False
@@ -107,3 +125,47 @@ class BinanceWebSocketClient:
     def is_running(self) -> bool:
         """Check if WebSocket is running."""
         return self.running
+    
+    def _attempt_reconnect(self):
+        """Attempt to reconnect WebSocket with exponential backoff."""
+        if self.reconnect_attempts >= self.max_reconnect_attempts:
+            logger.error(f"Max reconnect attempts ({self.max_reconnect_attempts}) reached. Giving up.")
+            self.running = False
+            return
+        
+        self.reconnect_attempts += 1
+        delay = self.reconnect_delay * (2 ** (self.reconnect_attempts - 1))
+        delay = min(delay, 300)  # Cap at 5 minutes
+        
+        logger.warning(f"Attempting reconnect #{self.reconnect_attempts} in {delay}s...")
+        time.sleep(delay)
+        
+        # Restart connection
+        self.start()
+    
+    def is_healthy(self) -> bool:
+        """
+        Check if WebSocket connection is healthy.
+        
+        Returns:
+            True if connection is healthy and receiving messages
+        """
+        if not self.running or not self.ws_healthy:
+            return False
+        
+        # Check if we've received messages recently (within last 60 seconds)
+        time_since_last_message = time.time() - self.last_message_time
+        if time_since_last_message > 60:
+            logger.warning(f"No messages received for {time_since_last_message:.0f}s - connection may be stale")
+            return False
+        
+        return True
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get detailed health status."""
+        return {
+            'running': self.running,
+            'healthy': self.is_healthy(),
+            'reconnect_attempts': self.reconnect_attempts,
+            'seconds_since_last_message': time.time() - self.last_message_time
+        }

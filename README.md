@@ -311,12 +311,63 @@ FROM positions WHERE status='CLOSED';"
 
 ---
 
-## 🧪 Testing
+## 🧪 Testing & Backtesting
 
-### Bootstrap Test
+### Run Unit Tests
+
+```bash
+# Install test dependencies
+pip install pytest pytest-cov
+
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ --cov=. --cov-report=html
+
+# Run specific test file
+pytest tests/test_momentum.py -v
+```
+
+### Test Categories
+
+- `test_momentum.py` - Momentum 2.0 calculation and signals
+- `test_bootstrap.py` - Bootstrap validation gate
+- `test_scheduler.py` - Anti-duplication scheduler
+- `test_risk_guards.py` - Risk management guards
+- `test_execution_paper.py` - Paper trading execution
+
+### Run Backtest
+
+```bash
+# Backtest over a date range
+python -m backtest.run_backtest \
+  --config config.yaml \
+  --start 2023-01-01 \
+  --end 2023-12-31 \
+  --seed 42
+
+# Results saved to ./reports/
+# - equity_curve.csv
+# - trades.csv
+
+# View metrics
+cat reports/equity_curve.csv
+```
+
+### Backtest Metrics
+
+The backtest generates:
+- **Returns**: Total return, final equity, total P&L
+- **Risk**: Max drawdown, Sharpe ratio, Sortino ratio
+- **Trading**: Total trades, hit rate, profit factor, avg trade P&L
+- **Activity**: Turnover ratio, avg holding period
+
+### Bootstrap Historical Data Test
 ```bash
 python -m data.bootstrap_history --config config.yaml
 ```
+
 
 ### Single Run Test (No scheduler)
 ```bash
@@ -402,6 +453,47 @@ Applied ONLY to 1d data:
 
 **SOFT PAUSE (1-3h):**
 - NS_v3 ≤ -1.2
+
+---
+
+## 🛡️ Resilience & Production Features
+
+### Rate Limiting & Retry Logic
+
+All external API calls use exponential backoff with jitter:
+- **Binance API**: Auto-retry on rate limits (429) and server errors (5xx)
+- **CryptoPanic**: Fallback to quant-only mode if unavailable
+- **OpenAI**: Fail-closed policy on errors
+
+### WebSocket Auto-Reconnection
+
+- Automatic reconnection with exponential backoff
+- Health monitoring (checks for stale connections)
+- Conservative mode when WebSocket is down
+
+### Monitoring & Alerts
+
+```python
+# Metrics tracked:
+# - Equity curve
+# - Current drawdown
+# - Trade count per day
+# - Error rate
+# - Pause events
+
+# Alert triggers:
+# - Daily drawdown exceeds threshold
+# - Error rate too high
+# - WebSocket offline > X minutes
+```
+
+### CI/CD
+
+GitHub Actions pipeline:
+- Run all unit tests
+- Check for hardcoded secrets
+- Verify LLM constraints
+- Basic code quality checks
 
 ---
 

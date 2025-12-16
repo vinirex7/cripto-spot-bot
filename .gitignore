@@ -43,6 +43,14 @@ logs/
 *.log
 *.jsonl
 
+# Reports (backtest results)
+reports/
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
 # IDE
 .vscode/
 .idea/

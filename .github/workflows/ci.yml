@@ -1,0 +1,105 @@
+name: CI - Vini QuantBot v3.0.1
+
+on:
+  push:
+    branches: [ main, copilot/** ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run tests with pytest
+      env:
+        BINANCE_API_KEY: test_key
+        BINANCE_API_SECRET: test_secret
+        CRYPTOPANIC_TOKEN: test_token
+      run: |
+        pytest tests/ -v --tb=short
+    
+    - name: Check for secrets in code
+      run: |
+        # Simple check for common secret patterns
+        ! grep -r "AKIA" . --exclude-dir=.git --exclude-dir=.venv --exclude-dir=__pycache__
+        ! grep -r "sk-proj-" . --exclude-dir=.git --exclude-dir=.venv --exclude-dir=__pycache__
+        echo "✓ No obvious secrets found in code"
+    
+    - name: Verify gitignore excludes sensitive files
+      run: |
+        if [ -f .gitignore ]; then
+          grep -q "\.env" .gitignore && echo "✓ .env in .gitignore"
+          grep -q "state/" .gitignore && echo "✓ state/ in .gitignore"
+          grep -q "logs/" .gitignore && echo "✓ logs/ in .gitignore"
+        else
+          echo "⚠️  .gitignore not found"
+          exit 1
+        fi
+    
+    - name: Run sample backtest (if data available)
+      run: |
+        # This would run a quick backtest if historical data was available
+        # For CI, we just verify the module can be imported
+        python -c "from backtest.run_backtest import BacktestEngine; print('✓ Backtest module OK')"
+        python -c "from backtest.metrics import generate_metrics_summary; print('✓ Metrics module OK')"
+    
+    - name: Code style check (basic)
+      run: |
+        # Check for obvious syntax errors
+        python -m py_compile bot/*.py data/*.py signals/*.py news/*.py ai/*.py risk/*.py execution/*.py storage/*.py
+        echo "✓ All Python files compile successfully"
+
+  security-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Verify no hardcoded secrets
+      run: |
+        echo "Checking for hardcoded API keys..."
+        ! grep -rn "BINANCE_API_KEY.*=.*['\"].*['\"]" --include="*.py" . --exclude-dir=.git --exclude-dir=.venv
+        ! grep -rn "OPENAI_API_KEY.*=.*['\"]sk-" --include="*.py" . --exclude-dir=.git --exclude-dir=.venv
+        echo "✓ No hardcoded secrets found"
+    
+    - name: Verify LLM constraints
+      run: |
+        echo "Verifying LLM cannot make trade decisions..."
+        # Check that trade decision code is not in AI modules
+        ! grep -rn "place_order\|execute_buy\|execute_sell" ai/*.py
+        ! grep -rn "def.*buy\|def.*sell" ai/*.py | grep -v "should_\|can_"
+        echo "✓ LLM properly constrained"
