@@ -149,3 +149,31 @@ class BinanceSpotClient:
         """
         return self._request("GET", "/api/v3/order", signed=True,
                             params={"symbol": symbol, "orderId": order_id})
+    
+    def get_klines(self, symbol: str, interval: str, limit: int = 500,
+                   start_time: Optional[int] = None, end_time: Optional[int] = None) -> list:
+        """
+        Get klines/candlestick data for a symbol.
+        
+        Args:
+            symbol: Trading pair symbol (e.g., BTCUSDT)
+            interval: Kline interval (e.g., 1m, 5m, 1h, 1d)
+            limit: Number of klines to return (max 1000)
+            start_time: Start time in milliseconds
+            end_time: End time in milliseconds
+            
+        Returns:
+            List of klines data
+        """
+        params = {
+            "symbol": symbol,
+            "interval": interval,
+            "limit": min(limit, 1000)
+        }
+        
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        
+        return self._request("GET", "/api/v3/klines", params=params)
