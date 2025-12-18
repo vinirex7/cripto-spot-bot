@@ -1,106 +1,96 @@
-bot:
-  name: "Vini-Cripto-Spot-Bot"
-  mode: "paper"   # paper | trade
-  loop_seconds: 60
-  decision_every_minutes: 15
-  log_dir: "./logs"
-
-exchange:
-  base_url: "https://api.binance.com"
-  recv_window: 5000
-  order_type: "LIMIT"
-  limit_ttl_seconds: 20
-  price_offset_bps: 3
-  max_spread_bps: 8
-  allow_market_for_stop: true
-
 universe:
-  symbols:
-    - BTCUSDT
-    - ETHUSDT
-    - BNBUSDT
-    - SOLUSDT
-    - LINKUSDT
-    - AVAXUSDT
-    - MATICUSDT
-    - ADAUSDT
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - LINKUSDT
+  - AVAXUSDT
+  - ADAUSDT
 
-positioning:
-  max_positions: 2
-  weight_per_position: 0.30
-  cash_buffer: 0.40
+paths:
+  data_dir: "data"
+  db_path: "data/market.sqlite"
+  logs_dir: "logs"
+
+execution:
+  mode: "paper"
+  decision_every_minutes: 15
+  loop_seconds: 5
+  timezone: "UTC"
+
+history:
+  enabled: true
+  backfill_on_start: true
+  backfill:
+    lookback_days_1d: 365
+    lookback_days_1h: 183
+    interval_1d: "1d"
+    interval_1h: "1h"
+    symbols_parallelism: 3
+    rest_rate_limit_sleep_s: 0.25
+    validate_gaps: true
+    max_gap_candles_1d: 2
+    max_gap_candles_1h: 4
 
 momentum:
-  n_days_short: 182
-  n_days_long: 365
-  age_days_buckets:
-    - {max_days: 365, factor: 1.00}
-    - {max_days: 456, factor: 0.75}
-    - {max_days: 547, factor: 0.50}
-    - {max_days: 9999, factor: 0.25}
-
-# Legacy momentum (dual-period) parameters kept for compatibility
-momentum2:
-  n_days_short: 180
-  n_days_long: 365
-
-news:
-  sentz_hard: -3.0
-  priceshockz_hard: -3.0
-  ns_hard: -2.5
-  ns_soft: -1.5
-  volspike_soft: 1.5
-  volspike_hard: 1.8
-  cooldown_hours_hard: 6
-
-microstructure:
-  ofi_z_entry: 2.0
-  ofi_z_risk_on: 1.5
-  fallback_volume: 1.0
+  enabled: true
+  lookback_months_short: 6
+  lookback_months_long: 12
+  min_momentum_idade: 0.50
+  require_delta_positive: true
+  bootstrap:
+    enabled: true
+    n_resamples: 300
+    block_size_days: 7
+    min_pwin_mom: 0.60
 
 risk:
-  target_vol_1d: 0.012
   max_positions: 2
   weight_per_position: 0.30
   cash_buffer: 0.40
+  target_vol_1d: 0.012
   daily_drawdown_pause: 0.025
   max_holding_hours: 72
-  illiq_size_discount: 0.5
 
-sentiment:
+news:
   enabled: true
-  provider: "cryptopanic"
-  decay_half_life_hours: 12
-  trusted_sources:
-    - coindesk
-    - cointelegraph
-    - reuters
-    - bloomberg
-
-economy_rules:
-  horizon_minutes: 60
-  ewma_alpha: 0.08
-  min_snr: 0.20
-  min_pwin: 0.55
-  require_ev_positive: true
-
-adaptive:
-  enabled: true
-  recalibrate_every_minutes: 60
-  lr: 0.10
-  ridge_lambda: 5.0
-  max_train_rows: 2000
-  min_train_rows: 200
-
-short_term_rules:
-  shock_filter:
+  schedule:
+    check_every_hours: 12
+  cryptopanic:
     enabled: true
-    z_threshold_1h: 3.0
-    cooldown_hours: 6
+    cache_minutes: 720
+    max_items_per_fetch: 50
+    dedupe_window_hours: 72
+  openai:
+    enabled: true
+    always_analyze: true
+    max_calls_per_fetch: 50
+    request_timeout_s: 25
+    cache_hours: 72
+    json_strict: true
+  scoring:
+    half_life_hours: 12
+    w_sent_z: 0.7
+    w_sent_llm: 0.3
+  shock:
+    hard_pause_hours: 6
+    soft_pause_hours: 2
+    hard_confidence_min: 0.65
+    hard_sentiment_max: -0.50
+    soft_threshold_ns: -1.20
+    critical_categories:
+      - hack
+      - exploit
+      - insolvency
+      - outage
+      - regulation
 
-storage:
-  sqlite_path: "./bot.db"
-
-paper:
-  equity_usdt: 1000
-  usdt_free: 1000
+logging:
+  enabled: true
+  level: "INFO"
+  flush_every_write: true
+  files:
+    decisions: "logs/decisions.jsonl"
+    news: "logs/news.jsonl"
+    trades: "logs/trades.jsonl"
+    system: "logs/system.jsonl"
