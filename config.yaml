@@ -1,3 +1,52 @@
+# API Keys Configuration (fallback to environment variables if empty)
+api_keys:
+  binance:
+    api_key: ""  # Se vazio, usa BINANCE_API_KEY env var
+    api_secret: ""  # Se vazio, usa BINANCE_API_SECRET env var
+  
+  cryptopanic:
+    token: ""  # Se vazio, usa CRYPTOPANIC_TOKEN env var
+  
+  openai:
+    api_key: ""  # Se vazio, usa OPENAI_API_KEY env var
+    model: "gpt-4o-mini"  # Se vazio, usa OPENAI_MODEL env var ou default
+
+bot:
+  name: "Vini-Cripto-Spot-Bot"
+  log_dir: "./logs"
+
+# Execution mode configuration
+execution:
+  mode: "paper"  # paper | trade
+  decision_every_minutes: 15
+  loop_seconds: 60
+  timezone: "UTC"
+  
+  paper:
+    initial_balance_usdt: 10000
+    enable_slippage: true
+    slippage_bps: 5
+  
+  trade:
+    dry_run: false  # Se true, simula mas não envia ordens
+    max_order_value_usdt: 1000  # Limite por ordem em modo trade
+
+# Exchange configuration
+exchange:
+  name: "binance"
+  base_url: "https://api.binance.com"
+  testnet_url: "https://testnet.binance.vision"  # Para testes
+  use_testnet: false
+  recv_window: 5000
+  timeout_seconds: 30
+  
+  orders:
+    default_type: "LIMIT"  # LIMIT | MARKET
+    limit_ttl_seconds: 30
+    price_offset_bps: 5  # Basis points offset para limit orders
+    max_spread_bps: 10  # Max spread aceitável
+    min_notional_usdt: 10  # Mínimo por ordem
+
 universe:
   - BTCUSDT
   - ETHUSDT
@@ -5,12 +54,24 @@ universe:
   - SOLUSDT
   - LINKUSDT
   - AVAXUSDT
+  - MATICUSDT
   - ADAUSDT
 
-paths:
-  data_dir: "data"
-  db_path: "data/market.sqlite"
-  logs_dir: "logs"
+positioning:
+  max_positions: 2
+  weight_per_position: 0.30
+  cash_buffer: 0.40
+
+momentum:
+  n_days_short: 182
+  n_days_long: 365
+  min_momentum_idade: 0
+  require_delta_positive: true
+  age_days_buckets:
+    - {max_days: 365, factor: 1.00}
+    - {max_days: 456, factor: 0.75}
+    - {max_days: 547, factor: 0.50}
+    - {max_days: 9999, factor: 0.25}
 
 execution:
   mode: "paper"
@@ -18,19 +79,22 @@ execution:
   loop_seconds: 5
   timezone: "UTC"
 
-history:
-  enabled: true
-  backfill_on_start: true
-  backfill:
-    lookback_days_1d: 365
-    lookback_days_1h: 183
-    interval_1d: "1d"
-    interval_1h: "1h"
-    symbols_parallelism: 3
-    rest_rate_limit_sleep_s: 0.25
-    validate_gaps: true
-    max_gap_candles_1d: 2
-    max_gap_candles_1h: 4
+news:
+  sentz_hard: -3.0
+  priceshockz_hard: -3.0
+  ns_hard: -2.5
+  ns_soft: -1.5
+  volspike_soft: 1.5
+  volspike_hard: 1.8
+  cooldown_hours_hard: 6
+  
+  cryptopanic:
+    enabled: true
+    request_timeout_s: 10
+  
+  openai:
+    enabled: true
+    request_timeout_s: 25
 
 momentum:
   enabled: true
@@ -85,12 +149,9 @@ news:
       - outage
       - regulation
 
+# Logging configuration
 logging:
-  enabled: true
-  level: "INFO"
   flush_every_write: true
   files:
     decisions: "logs/decisions.jsonl"
-    news: "logs/news.jsonl"
     trades: "logs/trades.jsonl"
-    system: "logs/system.jsonl"

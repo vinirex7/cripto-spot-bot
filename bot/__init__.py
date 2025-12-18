@@ -1,1 +1,3 @@
-# Cripto Spot Bot package initializer.
+"""Bot package."""
+
+__all__ = []

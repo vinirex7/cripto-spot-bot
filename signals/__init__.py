@@ -1,1 +1,3 @@
-# Signals package
+"""Signals package."""
+
+__all__ = []

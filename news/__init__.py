@@ -1,1 +1,3 @@
-# News package
+"""News package."""
+
+__all__ = []

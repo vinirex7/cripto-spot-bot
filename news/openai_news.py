@@ -1,15 +1,6 @@
-import json
+"""OpenAI news analysis with config-based API key loading."""
 import os
 from typing import Any, Dict, Optional
-
-import requests
-
-
-OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-
-
-def _clamp(value: float, min_v: float, max_v: float) -> float:
-    return max(min_v, min(max_v, value))
 
 
 def analyze_news(
@@ -18,10 +9,36 @@ def analyze_news(
     content: Optional[str],
     config: Dict[str, Any],
 ) -> Dict[str, Any]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    """
+    Analyze news using OpenAI ChatGPT API.
+    
+    The OpenAI model analyzes news sentiment and returns numerical values
+    (sentiment, confidence, impact_horizon_minutes, category, action_bias)
+    that are used by the NewsEngine to calculate sent_llm and evaluate
+    market shock (hard/soft/ok), which multiplies risk in bot decisions.
+    
+    Args:
+        title: News title
+        url: News URL
+        content: Optional news content
+        config: Bot configuration dictionary
+        
+    Returns:
+        Dictionary with sentiment analysis results:
+        - sentiment: float (-1 to 1)
+        - confidence: float (0 to 1)
+        - impact_horizon_minutes: int
+        - category: str
+        - action_bias: str (bullish/bearish/neutral)
+    """
+    # Try config first, then env var
+    api_keys = config.get("api_keys", {}).get("openai", {})
+    api_key = api_keys.get("api_key") or os.getenv("OPENAI_API_KEY")
+    model = api_keys.get("model") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    
     openai_cfg = config.get("news", {}).get("openai", {})
     timeout = openai_cfg.get("request_timeout_s", 25)
+    
     if not api_key or not openai_cfg.get("enabled", True):
         return {
             "sentiment": 0.0,
@@ -31,64 +48,63 @@ def analyze_news(
             "action_bias": "neutral",
             "openai_error": True,
         }
-    prompt = f"""Analyze the following crypto news and respond ONLY with valid JSON matching the schema:
-{{
-  "sentiment": -1.0,
-  "confidence": 0.80,
-  "impact_horizon_minutes": 360,
-  "category": "hack",
-  "action_bias": "risk_off",
-  "why": "Exchange exploit / security incident"
-}}
-Rules:
-- sentiment in [-1, 1]
-- confidence in [0, 1]
-- impact_horizon_minutes in [15, 4320]
-- action_bias in {{"risk_on","risk_off","neutral"}}
+    
+    try:
+        import requests
+        
+        prompt = f"""Analyze this crypto news and return a JSON response with:
+- sentiment: float from -1 (very negative) to 1 (very positive)
+- confidence: float from 0 to 1
+- impact_horizon_minutes: estimated impact duration in minutes
+- category: one of [regulation, adoption, technical, market, security, other]
+- action_bias: one of [bullish, bearish, neutral]
+
 Title: {title}
 URL: {url}
-Body: {content or "N/A"}
-"""
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a strict JSON generator for risk analysis."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0,
-        "response_format": {"type": "json_object"},
-    }
-    try:
-        resp = requests.post(
-            OPENAI_ENDPOINT, headers=headers, json=payload, timeout=timeout
+Content: {content or "N/A"}
+
+Return only valid JSON, no additional text."""
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a crypto market analyst. Return only valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.3
+        }
+        
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=timeout
         )
-        resp.raise_for_status()
-        data = resp.json()
-        content_resp = data["choices"][0]["message"]["content"]
-        parsed = json.loads(content_resp)
-        sentiment = _clamp(float(parsed.get("sentiment", 0)), -1, 1)
-        confidence = _clamp(float(parsed.get("confidence", 0)), 0, 1)
-        horizon = int(
-            _clamp(float(parsed.get("impact_horizon_minutes", 0)), 15, 4320)
-        )
-        category = str(parsed.get("category", "unknown"))[:64]
-        action_bias = parsed.get("action_bias", "neutral")
-        if action_bias not in {"risk_on", "risk_off", "neutral"}:
-            action_bias = "neutral"
+        response.raise_for_status()
+        
+        result = response.json()
+        content_text = result["choices"][0]["message"]["content"]
+        
+        # Parse JSON response
+        import json
+        analysis = json.loads(content_text)
+        
         return {
-            "sentiment": sentiment,
-            "confidence": confidence,
-            "impact_horizon_minutes": horizon,
-            "category": category,
-            "action_bias": action_bias,
-            "why": parsed.get("why", ""),
+            "sentiment": float(analysis.get("sentiment", 0.0)),
+            "confidence": float(analysis.get("confidence", 0.0)),
+            "impact_horizon_minutes": int(analysis.get("impact_horizon_minutes", 0)),
+            "category": analysis.get("category", "other"),
+            "action_bias": analysis.get("action_bias", "neutral"),
             "openai_error": False,
         }
-    except Exception:
+        
+    except Exception as e:
+        print(f"Error analyzing news with OpenAI: {e}")
         return {
             "sentiment": 0.0,
             "confidence": 0.0,
