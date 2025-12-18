@@ -1,29 +1,61 @@
+# API Keys Configuration (fallback to environment variables if empty)
+api_keys:
+  binance:
+    api_key: ""  # Se vazio, usa BINANCE_API_KEY env var
+    api_secret: ""  # Se vazio, usa BINANCE_API_SECRET env var
+  
+  cryptopanic:
+    token: ""  # Se vazio, usa CRYPTOPANIC_TOKEN env var
+  
+  openai:
+    api_key: ""  # Se vazio, usa OPENAI_API_KEY env var
+    model: "gpt-4o-mini"  # Se vazio, usa OPENAI_MODEL env var ou default
+
 bot:
   name: "Vini-Cripto-Spot-Bot"
-  mode: "paper"   # paper | trade
-  loop_seconds: 60
-  decision_every_minutes: 15
   log_dir: "./logs"
 
+# Execution mode configuration
+execution:
+  mode: "paper"  # paper | trade
+  decision_every_minutes: 15
+  loop_seconds: 60
+  timezone: "UTC"
+  
+  paper:
+    initial_balance_usdt: 10000
+    enable_slippage: true
+    slippage_bps: 5
+  
+  trade:
+    dry_run: false  # Se true, simula mas não envia ordens
+    max_order_value_usdt: 1000  # Limite por ordem em modo trade
+
+# Exchange configuration
 exchange:
+  name: "binance"
   base_url: "https://api.binance.com"
+  testnet_url: "https://testnet.binance.vision"  # Para testes
+  use_testnet: false
   recv_window: 5000
-  order_type: "LIMIT"
-  limit_ttl_seconds: 20
-  price_offset_bps: 3
-  max_spread_bps: 8
-  allow_market_for_stop: true
+  timeout_seconds: 30
+  
+  orders:
+    default_type: "LIMIT"  # LIMIT | MARKET
+    limit_ttl_seconds: 30
+    price_offset_bps: 5  # Basis points offset para limit orders
+    max_spread_bps: 10  # Max spread aceitável
+    min_notional_usdt: 10  # Mínimo por ordem
 
 universe:
-  symbols:
-    - BTCUSDT
-    - ETHUSDT
-    - BNBUSDT
-    - SOLUSDT
-    - LINKUSDT
-    - AVAXUSDT
-    - MATICUSDT
-    - ADAUSDT
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - LINKUSDT
+  - AVAXUSDT
+  - MATICUSDT
+  - ADAUSDT
 
 positioning:
   max_positions: 2
@@ -33,6 +65,8 @@ positioning:
 momentum:
   n_days_short: 182
   n_days_long: 365
+  min_momentum_idade: 0
+  require_delta_positive: true
   age_days_buckets:
     - {max_days: 365, factor: 1.00}
     - {max_days: 456, factor: 0.75}
@@ -52,6 +86,14 @@ news:
   volspike_soft: 1.5
   volspike_hard: 1.8
   cooldown_hours_hard: 6
+  
+  cryptopanic:
+    enabled: true
+    request_timeout_s: 10
+  
+  openai:
+    enabled: true
+    request_timeout_s: 25
 
 microstructure:
   ofi_z_entry: 2.0
@@ -101,6 +143,9 @@ short_term_rules:
 storage:
   sqlite_path: "./bot.db"
 
-paper:
-  equity_usdt: 1000
-  usdt_free: 1000
+# Logging configuration
+logging:
+  flush_every_write: true
+  files:
+    decisions: "logs/decisions.jsonl"
+    trades: "logs/trades.jsonl"
