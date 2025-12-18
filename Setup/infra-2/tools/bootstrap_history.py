@@ -147,14 +147,17 @@ def backfill_symbol(
         total += upsert(conn, symbol, interval, rows)
 
         # advance start_ms to last candle + interval
-        start_ms = int(rows[-1][0]) + ms
+        last_timestamp = int(rows[-1][0])
+        new_start_ms = last_timestamp + ms
+        
+        # Safety: if API returns same last timestamp, avoid infinite loop
+        if new_start_ms <= start_ms:
+            break
+        
+        start_ms = new_start_ms
 
         # small sleep to avoid hammering
         time.sleep(0.2)
-
-        # Safety: if API returns same last timestamp, avoid infinite loop
-        if len(rows) == 1 and int(rows[-1][0]) + ms == start_ms:
-            break
 
     return total
 

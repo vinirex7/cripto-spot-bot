@@ -26,15 +26,16 @@ PYTHONPATH=. python3 Setup/infra-2/tools/bootstrap_history.py config.yaml
 The script reads the following configuration from your `config.yaml`:
 
 ```yaml
-# API keys (required for fetching data)
+# API keys (optional - can be empty for public klines data)
 api_keys:
   binance:
-    api_key: "your_api_key"
-    api_secret: "your_api_secret"
+    api_key: ""  # Can be empty for this script
+    api_secret: ""  # Can be empty for this script
 
 # Or use environment variables (fallback):
 # export BINANCE_API_KEY="your_api_key"
 # export BINANCE_API_SECRET="your_api_secret"
+# Note: Empty credentials work fine since klines endpoint is public
 
 # Exchange configuration (optional)
 binance:
@@ -116,10 +117,10 @@ Done. Total upserts: 9480
 
 - Python 3.10+
 - All dependencies from `requirements.txt` (PyYAML, requests)
-- Valid Binance API credentials
+- Binance API credentials (can be empty for public market data)
 
 ### Notes
 
 - The script includes rate limiting (0.2s sleep between API calls) to avoid hitting Binance rate limits
-- API calls are not signed (public market data), so API keys are loaded but used for client initialization
+- The `/api/v3/klines` endpoint is public and doesn't require API authentication, so empty API credentials work for this script
 - The script uses WAL mode for SQLite for better concurrency

@@ -2,7 +2,7 @@
 import hashlib
 import hmac
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import requests
 
 
@@ -151,7 +151,7 @@ class BinanceSpotClient:
                             params={"symbol": symbol, "orderId": order_id})
     
     def get_klines(self, symbol: str, interval: str, limit: int = 500,
-                   start_time: Optional[int] = None, end_time: Optional[int] = None) -> list:
+                   start_time: Optional[int] = None, end_time: Optional[int] = None) -> List[List[Any]]:
         """
         Get klines/candlestick data for a symbol.
         
