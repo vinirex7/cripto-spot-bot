@@ -37,12 +37,15 @@ ENV/
 .venv/
 .env/
 
-# Environment variables and secrets
+# API Keys - NUNCA COMMITAR!
+# WARNING: config.yaml may contain API keys - ensure it's properly sanitized before committing
+# Consider using config.template.yaml for versioning instead
 .env
 .env.*
 *.key
 *.pem
 *.crt
+*.secret
 api_keys.txt
 secrets.json
 
