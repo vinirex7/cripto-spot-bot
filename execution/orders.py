@@ -337,3 +337,28 @@ class LiveExecutor:
             }
             self.record_trade(result)
             return result
+
+def create_executor(config: Dict[str, Any]):
+    """
+    Factory: decide se usa PaperExecutor ou LiveExecutor.
+    """
+    mode = (config.get("execution", {}) or {}).get("mode", "paper").lower()
+
+    if mode == "paper":
+        return PaperExecutor(config)
+
+    # trade mode
+    # API keys: prefer env vars, fallback to config.yaml api_keys.binance.*
+    api_cfg = (config.get("api_keys", {}) or {}).get("binance", {}) or {}
+    api_key = os.getenv("BINANCE_API_KEY") or api_cfg.get("api_key") or ""
+    api_secret = os.getenv("BINANCE_API_SECRET") or api_cfg.get("api_secret") or ""
+
+    if not api_key or not api_secret:
+        raise RuntimeError("Missing Binance API keys (set BINANCE_API_KEY/BINANCE_API_SECRET or config.yaml api_keys.binance).")
+
+    client = BinanceSpotClient(
+        api_key=api_key,
+        api_secret=api_secret,
+        config=config,
+    )
+    return LiveExecutor(config, client)
