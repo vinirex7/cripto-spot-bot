@@ -1,9 +1,40 @@
+# execution/orders.py
 """Order execution module with paper and live executors."""
-import os
-from typing import Any, Dict
+from __future__ import annotations
+
+import math
+from decimal import Decimal, ROUND_DOWN
+from typing import Any, Dict, Optional
 
 from bot.utils import write_jsonl, utcnow
 from execution.binance_client import BinanceSpotClient
+
+
+def _dec_places(step_str: str) -> int:
+    # "0.00100000" -> 3, "1.00000000" -> 0
+    s = step_str.strip()
+    if "E" in s or "e" in s:
+        # fallback; should not happen for Binance filters
+        return 8
+    if "." not in s:
+        return 0
+    return len(s.split(".")[1].rstrip("0"))
+
+
+def _floor_to_step(value: float, step_str: str) -> float:
+    step = Decimal(step_str)
+    v = Decimal(str(value))
+    if step == 0:
+        return float(value)
+    # floor to step: floor(v/step)*step
+    floored = (v / step).to_integral_value(rounding=ROUND_DOWN) * step
+    return float(floored)
+
+
+def _fmt(value: float, decimals: int) -> str:
+    if decimals <= 0:
+        return str(int(value))
+    return f"{value:.{decimals}f}"
 
 
 class PaperExecutor:
@@ -12,9 +43,7 @@ class PaperExecutor:
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = config
         self.logs_cfg = config.get("logging", {})
-        self.balance_usdt = (
-            config.get("execution", {}).get("paper", {}).get("initial_balance_usdt", 10000)
-        )
+        self.balance_usdt = config.get("execution", {}).get("paper", {}).get("initial_balance_usdt", 10000)
         self.positions: Dict[str, float] = {}
 
     def execute(self, symbol: str, action: str, target_weight: float, current_price: float) -> Dict[str, Any]:
@@ -66,11 +95,7 @@ class PaperExecutor:
         return self.logs_cfg.get("files", {}).get("trades", "logs/trades.jsonl")
 
     def record_trade(self, payload: Dict[str, Any]) -> None:
-        write_jsonl(
-            self._trades_path(),
-            payload,
-            flush=self.logs_cfg.get("flush_every_write", True),
-        )
+        write_jsonl(self._trades_path(), payload, flush=self.logs_cfg.get("flush_every_write", True))
 
 
 class LiveExecutor:
@@ -83,10 +108,15 @@ class LiveExecutor:
         self.dry_run = config.get("execution", {}).get("trade", {}).get("dry_run", False)
         self.orders_cfg = config.get("exchange", {}).get("orders", {})
 
+    def _trades_path(self) -> str:
+        return self.logs_cfg.get("files", {}).get("trades", "logs/trades.jsonl")
+
+    def record_trade(self, payload: Dict[str, Any]) -> None:
+        write_jsonl(self._trades_path(), payload, flush=self.logs_cfg.get("flush_every_write", True))
+
     def _get_free_usdt(self, account: Dict[str, Any]) -> float:
         try:
-            balances = account.get("balances", [])
-            for b in balances:
+            for b in account.get("balances", []) or []:
                 if b.get("asset") == "USDT":
                     return float(b.get("free", 0.0))
         except Exception:
@@ -107,27 +137,64 @@ class LiveExecutor:
             return {"status": "error", "reason": "Failed to fetch account", "error": str(e)}
 
         balance_usdt = self._get_free_usdt(account)
-
         if balance_usdt <= 0:
             return {"status": "skipped", "reason": "No free USDT balance"}
 
-        # --- NEW: Enforce cash buffer (max investable fraction of free USDT) ---
+        # Cash buffer
         cash_buffer = float(self.config.get("risk", {}).get("cash_buffer", 0.40))
-        cash_buffer = max(0.0, min(0.95, cash_buffer))  # safety clamp
+        cash_buffer = max(0.0, min(0.95, cash_buffer))
         max_investable = balance_usdt * (1.0 - cash_buffer)
 
-        # Base target order value from weight
+        # Base target value
         order_value = balance_usdt * float(target_weight)
-
-        # Do not exceed investable cash by design
         order_value = min(order_value, max_investable)
 
-        # Existing hard cap per order
+        # Hard cap
         max_order = float(self.config.get("execution", {}).get("trade", {}).get("max_order_value_usdt", 1000))
         order_value = min(order_value, max_order)
 
-        # Min notional guard
-        min_notional = float(self.orders_cfg.get("min_notional_usdt", 10))
+        # Pull symbol filters (precision + minNotional)
+        try:
+            filters = self.client.get_symbol_filters(symbol)
+        except Exception as e:
+            result = {
+                "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "mode": "trade_dry_run" if self.dry_run else "trade_live",
+                "symbol": symbol,
+                "action": action,
+                "status": "error",
+                "reason": "Failed to fetch symbol filters",
+                "error": str(e),
+            }
+            self.record_trade(result)
+            return result
+
+        lot = filters.get("LOT_SIZE", {})
+        pf = filters.get("PRICE_FILTER", {})
+        mn = filters.get("MIN_NOTIONAL", {})  # older
+        notional = filters.get("NOTIONAL", {})  # newer on some symbols
+
+        step_str = lot.get("stepSize", "0.00000100")
+        tick_str = pf.get("tickSize", "0.01")
+
+        qty_dec = _dec_places(step_str)
+        px_dec = _dec_places(tick_str)
+
+        # minNotional from exchange if present, else config fallback
+        cfg_min_notional = float(self.orders_cfg.get("min_notional_usdt", 10))
+        exch_min_notional = None
+        if "minNotional" in mn:
+            try:
+                exch_min_notional = float(mn["minNotional"])
+            except Exception:
+                pass
+        elif "minNotional" in notional:
+            try:
+                exch_min_notional = float(notional["minNotional"])
+            except Exception:
+                pass
+
+        min_notional = max(cfg_min_notional, exch_min_notional or 0.0)
 
         if order_value < min_notional:
             result = {
@@ -149,10 +216,27 @@ class LiveExecutor:
             self.record_trade(result)
             return result
 
-        quantity = order_value / float(current_price)
+        # Compute qty and normalize to stepSize
+        raw_qty = order_value / float(current_price)
+        quantity = _floor_to_step(raw_qty, step_str)
 
-        order_type = self.orders_cfg.get("default_type", "LIMIT")
+        if quantity <= 0:
+            result = {
+                "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "mode": "trade_dry_run" if self.dry_run else "trade_live",
+                "symbol": symbol,
+                "action": action,
+                "status": "skipped",
+                "reason": "Quantity rounded to zero by stepSize",
+                "raw_quantity": raw_qty,
+                "stepSize": step_str,
+            }
+            self.record_trade(result)
+            return result
 
+        order_type = self.orders_cfg.get("default_type", "LIMIT").upper()
+
+        # Dry-run
         if self.dry_run:
             result = {
                 "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -168,6 +252,8 @@ class LiveExecutor:
                 "balance_usdt_free": balance_usdt,
                 "cash_buffer": cash_buffer,
                 "max_investable_usdt": max_investable,
+                "stepSize": step_str,
+                "tickSize": tick_str,
             }
             self.record_trade(result)
             return result
@@ -175,15 +261,40 @@ class LiveExecutor:
         # Live order creation
         price_offset_bps = float(self.orders_cfg.get("price_offset_bps", 5))
         offset = 1 + (price_offset_bps / 10000.0) if action == "BUY" else 1 - (price_offset_bps / 10000.0)
-        limit_price = float(current_price) * offset
+        raw_limit_price = float(current_price) * offset
+        limit_price = _floor_to_step(raw_limit_price, tick_str)
+
+        # Re-check notional after rounding (important!)
+        est_notional = float(quantity) * float(limit_price if order_type == "LIMIT" else current_price)
+        if est_notional < min_notional:
+            result = {
+                "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "mode": "trade_live",
+                "symbol": symbol,
+                "action": action,
+                "status": "skipped",
+                "reason": "Notional fell below min_notional after precision rounding",
+                "est_notional": est_notional,
+                "min_notional_usdt": min_notional,
+                "quantity": quantity,
+                "limit_price": limit_price,
+                "stepSize": step_str,
+                "tickSize": tick_str,
+            }
+            self.record_trade(result)
+            return result
+
+        # Send as strings (avoids scientific notation / float quirks)
+        qty_str = _fmt(quantity, qty_dec)
+        price_str = _fmt(limit_price, px_dec) if order_type == "LIMIT" else None
 
         try:
             order = self.client.create_order(
                 symbol=symbol,
                 side=action,
                 order_type=order_type,
-                quantity=quantity,
-                price=limit_price if order_type == "LIMIT" else None,
+                quantity=qty_str,
+                price=price_str,
             )
 
             result = {
@@ -202,7 +313,12 @@ class LiveExecutor:
                 "balance_usdt_free": balance_usdt,
                 "cash_buffer": cash_buffer,
                 "max_investable_usdt": max_investable,
+                "stepSize": step_str,
+                "tickSize": tick_str,
             }
+            self.record_trade(result)
+            return result
+
         except Exception as e:
             result = {
                 "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -210,42 +326,14 @@ class LiveExecutor:
                 "symbol": symbol,
                 "action": action,
                 "status": "error",
+                "reason": "Failed to create order",
                 "error": str(e),
+                "quantity": qty_str,
+                "price": price_str,
                 "order_value_usdt": order_value,
                 "balance_usdt_free": balance_usdt,
-                "cash_buffer": cash_buffer,
-                "max_investable_usdt": max_investable,
+                "stepSize": step_str,
+                "tickSize": tick_str,
             }
-
-        self.record_trade(result)
-        return result
-
-    def _trades_path(self) -> str:
-        return self.logs_cfg.get("files", {}).get("trades", "logs/trades.jsonl")
-
-    def record_trade(self, payload: Dict[str, Any]) -> None:
-        write_jsonl(
-            self._trades_path(),
-            payload,
-            flush=self.logs_cfg.get("flush_every_write", True),
-        )
-
-
-def create_executor(config: Dict[str, Any]) -> Any:
-    mode = config.get("execution", {}).get("mode", "paper")
-
-    if mode == "paper":
-        return PaperExecutor(config)
-
-    if mode == "trade":
-        api_keys = config.get("api_keys", {}).get("binance", {})
-        api_key = api_keys.get("api_key") or os.getenv("BINANCE_API_KEY")
-        api_secret = api_keys.get("api_secret") or os.getenv("BINANCE_API_SECRET")
-
-        if not api_key or not api_secret:
-            raise ValueError("Binance API credentials not found in config or environment")
-
-        client = BinanceSpotClient(api_key, api_secret, config.get("exchange", {}))
-        return LiveExecutor(config, client)
-
-    raise ValueError(f"Invalid execution mode: {mode}")
+            self.record_trade(result)
+            return result
