@@ -99,20 +99,6 @@ class BotEngine:
                     f"Momentum blocked | "
                     f"m6={m6:.2f}, m12={m12:.2f}, Δm={delta_m:.2f}, age={m_age:.0f}"
                 )
-
-
-            
-
-
-
-
-
-
-
-
-
-
-
             
             # Execute trade if action != HOLD
             execution_result = None
