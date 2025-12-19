@@ -69,18 +69,50 @@ class BotEngine:
             target_weight = 0.0
             action = "HOLD"
             reason = "Momentum insufficient or risk constraints"
-            
+
             if features and risk_ctx.get("risk_multiplier", 0) > 0:
-                momentum_cfg = self.config.get("momentum", {})
-                if features.get("m_age", 0) >= momentum_cfg.get("min_momentum_idade", 0):
-                    if not momentum_cfg.get("require_delta_positive", True) or features.get("delta_m", 0) > 0:
-                        target_weight = min(
-                            self.config.get("risk", {}).get("weight_per_position", 0.0),
-                            self.config.get("risk", {}).get("target_vol_1d", 1.0),
-                        )
-                        target_weight *= risk_ctx.get("risk_multiplier", 1.0)
-                        action = "BUY" if target_weight > 0 else "HOLD"
-                        reason = "Momentum ok; risk ok"
+            momentum_cfg = self.config.get("momentum", {})
+
+                m6 = features.get("m_6", 0.0)
+                m12 = features.get("m_12", 0.0)
+                delta_m = features.get("delta_m", 0.0)
+                m_age = features.get("m_age", 0.0)
+
+            min_age = momentum_cfg.get("min_momentum_idade", 0)
+            require_delta = momentum_cfg.get("require_delta_positive", True)
+
+            direction_ok = (m6 > 0) and (m12 > 0)
+            acceleration_ok = (delta_m > 0) if require_delta else True
+            age_ok = (m_age >= min_age)
+
+            momentum_ok = direction_ok and acceleration_ok and age_ok
+
+            if momentum_ok:
+                base_weight = self.config.get("risk", {}).get("weight_per_position", 0.0)
+                target_weight = base_weight * risk_ctx.get("risk_multiplier", 1.0)
+
+                if target_weight > 0:
+                    action = "BUY"
+                    reason = "Momentum ok; risk ok"
+            else:
+                reason = (
+                    f"Momentum blocked | "
+                    f"m6={m6:.2f}, m12={m12:.2f}, Δm={delta_m:.2f}, age={m_age:.0f}"
+                )
+
+
+            
+
+
+
+
+
+
+
+
+
+
+
             
             # Execute trade if action != HOLD
             execution_result = None
