@@ -6,7 +6,8 @@ import os
 import time
 import hmac
 import hashlib
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlencode
 
 import requests
 
@@ -30,7 +31,7 @@ class BinanceSpotClient:
 
         # --- URLs / settings ---
         ex = self.config.get("exchange", {}) if isinstance(self.config, dict) else {}
-        self.base_url = ex.get("base_url", "https://api.binance.com")
+        self.base_url = str(ex.get("base_url", "https://api.binance.com")).rstrip("/")
 
         self.timeout = float(ex.get("timeout_seconds", 20))
         self.recv_window = int(ex.get("recv_window_ms", 5000))
@@ -40,24 +41,71 @@ class BinanceSpotClient:
         self._exchange_info_cache_ts: float = 0.0
         self._exchange_info_cache_ttl: float = float(ex.get("exchange_info_cache_ttl_seconds", 300))
 
-    def _sign(self, params: Dict[str, Any]) -> str:
-        # Binance signature: query string of params sorted by insertion order from requests.
-        query = "&".join([f"{k}={params[k]}" for k in params])
-        return hmac.new(self.api_secret.encode("utf-8"), query.encode("utf-8"), hashlib.sha256).hexdigest()
+    # -------------------------
+    # Signing + request
+    # -------------------------
+    def _canonicalize_params(self, params: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Convert params to a clean dict[str,str] without None values.
+        Binance signature is very sensitive to exact bytes sent.
+        """
+        out: Dict[str, str] = {}
+        for k, v in (params or {}).items():
+            if v is None:
+                continue
+            # Keep already formatted strings (orders.py sends qty/price as strings)
+            if isinstance(v, bool):
+                out[k] = "true" if v else "false"
+            else:
+                out[k] = str(v)
+        return out
 
-    def _request(self, method: str, endpoint: str, signed: bool = False, **kwargs: Any) -> Dict[str, Any]:
+    def _build_query_and_signature(self, params: Dict[str, Any]) -> Tuple[str, str]:
+        """
+        Builds the query string using urllib.parse.urlencode (the same encoding standard requests uses),
+        then signs exactly that query string.
+        """
+        p = self._canonicalize_params(params)
+
+        # Sort keys for stability (recommended; Binance accepts it and avoids random ordering differences)
+        query = urlencode(sorted(p.items()), doseq=True)
+
+        sig = hmac.new(
+            self.api_secret.encode("utf-8"),
+            query.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return query, sig
+
+    def _request(self, method: str, endpoint: str, signed: bool = False, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         url = f"{self.base_url}{endpoint}"
         headers = {"X-MBX-APIKEY": self.api_key}
 
-        if signed:
-            params = kwargs.get("params", {}) or {}
-            params["timestamp"] = int(time.time() * 1000)
-            params["recvWindow"] = self.recv_window
-            params["signature"] = self._sign(params)
-            kwargs["params"] = params
+        p = params or {}
 
-        resp = requests.request(method, url, headers=headers, timeout=self.timeout, **kwargs)
-        resp.raise_for_status()
+        if signed:
+            p = dict(p)  # copy
+            p["timestamp"] = int(time.time() * 1000)
+            p["recvWindow"] = self.recv_window
+
+            _, sig = self._build_query_and_signature(p)
+            p["signature"] = sig
+
+            # Ensure everything is str (after signature too)
+            p = self._canonicalize_params(p)
+
+        # Binance expects signed params in querystring (requests 'params' does that)
+        resp = requests.request(method, url, headers=headers, timeout=self.timeout, params=p)
+
+        # Better error visibility than a naked raise_for_status()
+        if resp.status_code >= 400:
+            # Binance usually returns JSON: {"code":-1013,"msg":"..."}
+            try:
+                j = resp.json()
+            except Exception:
+                j = {"raw": resp.text}
+            raise RuntimeError(f"Binance HTTP {resp.status_code} {endpoint} | {j}")
+
         return resp.json()
 
     # -------------------------
@@ -78,13 +126,18 @@ class BinanceSpotClient:
         price: Optional[Any] = None,
         time_in_force: str = "GTC",
     ) -> Dict[str, Any]:
+        """
+        quantity/price should preferably be strings already (orders.py sends str)
+        to avoid float formatting issues.
+        """
+        ot = str(order_type).upper()
         params: Dict[str, Any] = {
             "symbol": symbol,
-            "side": side,
-            "type": order_type,
+            "side": str(side).upper(),
+            "type": ot,
             "quantity": quantity,
         }
-        if order_type.upper() == "LIMIT":
+        if ot == "LIMIT":
             params["timeInForce"] = time_in_force
             params["price"] = price
 
@@ -102,7 +155,7 @@ class BinanceSpotClient:
         ):
             return self._exchange_info_cache
 
-        info = self._request("GET", "/api/v3/exchangeInfo")
+        info = self._request("GET", "/api/v3/exchangeInfo", signed=False)
         self._exchange_info_cache = info
         self._exchange_info_cache_ts = now
         return info
