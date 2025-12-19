@@ -53,7 +53,6 @@ class BinanceSpotClient:
         for k, v in (params or {}).items():
             if v is None:
                 continue
-            # Keep already formatted strings (orders.py sends qty/price as strings)
             if isinstance(v, bool):
                 out[k] = "true" if v else "false"
             else:
@@ -62,12 +61,16 @@ class BinanceSpotClient:
 
     def _build_query_and_signature(self, params: Dict[str, Any]) -> Tuple[str, str]:
         """
-        Builds the query string using urllib.parse.urlencode (the same encoding standard requests uses),
-        then signs exactly that query string.
+        Build the EXACT query string we will send, then sign exactly those bytes.
+
+        IMPORTANT:
+        - We must send exactly the same ordering/encoding that we sign.
+        - Therefore we return a query string (sorted for stability) and we will
+          embed it into the URL directly, NOT let `requests` rebuild it from a dict.
         """
         p = self._canonicalize_params(params)
 
-        # Sort keys for stability (recommended; Binance accepts it and avoids random ordering differences)
+        # Stable ordering to prevent random ordering differences
         query = urlencode(sorted(p.items()), doseq=True)
 
         sig = hmac.new(
@@ -75,31 +78,40 @@ class BinanceSpotClient:
             query.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
+
         return query, sig
 
-    def _request(self, method: str, endpoint: str, signed: bool = False, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        url = f"{self.base_url}{endpoint}"
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        signed: bool = False,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        base = f"{self.base_url}{endpoint}"
         headers = {"X-MBX-APIKEY": self.api_key}
 
         p = params or {}
 
+        # For SIGNED endpoints: build query string + signature, then send EXACTLY that in URL
         if signed:
-            p = dict(p)  # copy
+            p = dict(p)  # copy defensively
             p["timestamp"] = int(time.time() * 1000)
             p["recvWindow"] = self.recv_window
 
-            _, sig = self._build_query_and_signature(p)
-            p["signature"] = sig
+            query, sig = self._build_query_and_signature(p)
 
-            # Ensure everything is str (after signature too)
-            p = self._canonicalize_params(p)
+            # Send exactly what we signed:
+            url = f"{base}?{query}&signature={sig}"
 
-        # Binance expects signed params in querystring (requests 'params' does that)
-        resp = requests.request(method, url, headers=headers, timeout=self.timeout, params=p)
+            resp = requests.request(method, url, headers=headers, timeout=self.timeout)
 
-        # Better error visibility than a naked raise_for_status()
+        else:
+            # For public endpoints, a normal params dict is fine.
+            # (Binance doesn't require ordering here.)
+            resp = requests.request(method, base, headers=headers, timeout=self.timeout, params=self._canonicalize_params(p))
+
         if resp.status_code >= 400:
-            # Binance usually returns JSON: {"code":-1013,"msg":"..."}
             try:
                 j = resp.json()
             except Exception:
