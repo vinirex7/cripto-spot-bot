@@ -50,6 +50,7 @@ def _fetch_closes_sqlite(db_path: str, symbol: str, interval: str, limit: int) -
     """
     if not os.path.exists(db_path):
         return [], []
+
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
@@ -61,7 +62,7 @@ def _fetch_closes_sqlite(db_path: str, symbol: str, interval: str, limit: int) -
             ORDER BY open_time_ms DESC
             LIMIT ?
             """,
-            (symbol, interval, limit),
+            (symbol, interval, int(limit)),
         )
         rows = cur.fetchall()
     finally:
@@ -75,40 +76,38 @@ def _fetch_closes_sqlite(db_path: str, symbol: str, interval: str, limit: int) -
 
 
 def compute_momentum_features(
-    history_store: Any,
+    history_store: Any,  # kept for compatibility with existing calls, but unused
     symbol: str,
     momentum_cfg: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     """
-    Compute momentum features for a symbol.
+    Compute momentum features for a symbol reading directly from SQLite.
 
     Required DB table: ohlcv(symbol, interval, open_time_ms, close, ...)
-    Uses LIMIT-based retrieval (robust).
+
+    IMPORTANT:
+    - We do NOT rely on `history_store` (it may not exist in this project).
+    - DB path comes from momentum_cfg['sqlite_path'] or defaults to './bot.db'.
+    - Uses LIMIT-based retrieval to avoid timezone/window bugs.
     """
 
     # Config defaults
-    interval_1d = momentum_cfg.get("interval_1d", "1d")
+    interval_1d = str(momentum_cfg.get("interval_1d", "1d"))
+
+    # How many daily candles to pull (days ~= candles for 1d)
     lookback_6m_days = int(momentum_cfg.get("lookback_6m_days", 180))
     lookback_12m_days = int(momentum_cfg.get("lookback_12m_days", 360))
+
+    # Minimum points required to compute stable sigma
     min_points = int(momentum_cfg.get("min_points", 60))
 
-    # Discover sqlite path
-    db_path = None
-    # Try history_store.config.storage.sqlite_path if exists
-    try:
-        db_path = history_store.config.get("storage", {}).get("sqlite_path")
-    except Exception:
-        db_path = None
+    # DB path: only from config (no history_store)
+    db_path = str(momentum_cfg.get("sqlite_path", "./bot.db"))
 
-    if not db_path:
-        # fallback common names
-        db_path = "./bot.db"
-
-    # IMPORTANT: use LIMIT, not time windows
     closes_6, times_6 = _fetch_closes_sqlite(db_path, symbol, interval_1d, lookback_6m_days)
     closes_12, times_12 = _fetch_closes_sqlite(db_path, symbol, interval_1d, lookback_12m_days)
 
-    # Data sufficiency
+    # Data sufficiency checks
     if len(closes_6) < min_points or len(closes_12) < min_points:
         return None
 
@@ -120,8 +119,7 @@ def compute_momentum_features(
     rets_6 = _log_returns_from_closes(closes_6)
     vol_1d = _sample_std(rets_6) if len(rets_6) >= 2 else 0.0
 
-    # m_age: days between first close in 12m window and last close in 12m window
-    # (simple proxy; you can refine later with trend-age logic)
+    # m_age: span in days covered by the 12m window (proxy)
     m_age = 0.0
     if times_12:
         m_age = (times_12[-1] - times_12[0]) / (1000 * 86400)
