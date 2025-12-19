@@ -71,7 +71,7 @@ class BotEngine:
             reason = "Momentum insufficient or risk constraints"
 
             if features and risk_ctx.get("risk_multiplier", 0) > 0:
-            momentum_cfg = self.config.get("momentum", {})
+                momentum_cfg = self.config.get("momentum", {})
 
                 m6 = features.get("m_6", 0.0)
                 m12 = features.get("m_12", 0.0)
