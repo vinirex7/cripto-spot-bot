@@ -7,6 +7,12 @@ Key upgrades (LiveExecutor):
 - Proper SELL: sells your actual free balance (base asset), not a computed qty from USDT.
 - Optional: cancel open BUY orders before SELL (to avoid conflicts and free funds).
 - Uses Binance filters: stepSize / tickSize / minNotional, with post-rounding notional checks.
+
+PATCH for your new SELL rules:
+- SELL forced to MARKET by default (safer exits). Configurable.
+- Normalize returned status to: "filled" | "open" | "skipped" | "error"
+  (engine/PositionStore can reliably detect fills).
+- PaperExecutor now returns "filled"/"skipped" instead of "simulated".
 """
 
 from __future__ import annotations
@@ -71,6 +77,19 @@ def _fmt(value: float, decimals: int) -> str:
     return f"{value:.{decimals}f}"
 
 
+def _norm_order_status(order_status: Any) -> str:
+    """Normalize Binance order status to stable buckets."""
+    s = str(order_status or "").upper().strip()
+    if s in ("FILLED", "PARTIALLY_FILLED"):
+        return "filled"
+    if s in ("NEW",):
+        return "open"
+    if s in ("CANCELED", "REJECTED", "EXPIRED"):
+        return "error"
+    # fallback
+    return "open" if s else "error"
+
+
 # -----------------------------
 # Paper executor
 # -----------------------------
@@ -101,7 +120,7 @@ class PaperExecutor:
             "action": action,
             "target_weight": float(target_weight),
             "price": float(current_price),
-            "status": "simulated",
+            "status": "filled",  # <<< PATCH: engine/PositionStore likes stable statuses
         }
 
         if current_price <= 0:
@@ -156,6 +175,9 @@ class LiveExecutor:
         self.prevent_if_open_orders = bool(self.orders_cfg.get("prevent_if_open_orders", True))
         self.cancel_open_buys_before_sell = bool(self.orders_cfg.get("cancel_open_buys_before_sell", True))
         self.position_epsilon = float(self.orders_cfg.get("position_epsilon", 1e-12))  # tiny threshold
+
+        # <<< PATCH: for your SELL rules, we want exits to actually happen
+        self.force_market_sell = bool(self.orders_cfg.get("force_market_sell", True))
 
     def _trades_path(self) -> str:
         return (self.logs_cfg.get("files", {}) or {}).get("trades", "logs/trades.jsonl")
@@ -279,15 +301,13 @@ class LiveExecutor:
                                 self._cancel_order(symbol, o.get("orderId"))
                                 cancelled.append(o.get("orderId"))
                             except Exception:
-                                # ignore individual cancel failures; we will re-check open orders
                                 pass
                     # Re-check after cancels
                     try:
                         open_orders = self._get_open_orders(symbol)
                     except Exception:
-                        open_orders = open_orders  # keep previous
+                        open_orders = open_orders
 
-                    # If still any open orders, skip to avoid conflicts
                     if open_orders:
                         result = {
                             "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -302,7 +322,6 @@ class LiveExecutor:
                         self.record_trade(result)
                         return result
                 else:
-                    # BUY (or SELL without cancel policy): do not place more
                     result = {
                         "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
                         "mode": "trade_dry_run" if self.dry_run else "trade_live",
@@ -355,8 +374,8 @@ class LiveExecutor:
 
         lot = (filters.get("LOT_SIZE", {}) or {})
         pf = (filters.get("PRICE_FILTER", {}) or {})
-        mn = (filters.get("MIN_NOTIONAL", {}) or {})     # older
-        notional = (filters.get("NOTIONAL", {}) or {})   # newer
+        mn = (filters.get("MIN_NOTIONAL", {}) or {})
+        notional = (filters.get("NOTIONAL", {}) or {})
 
         step_str = lot.get("stepSize", "0.00000100")
         tick_str = pf.get("tickSize", "0.01")
@@ -385,6 +404,10 @@ class LiveExecutor:
         if order_type not in ("LIMIT", "MARKET"):
             order_type = "LIMIT"
 
+        # <<< PATCH: force MARKET for SELL exits (recommended for your strategy)
+        if action == "SELL" and self.force_market_sell:
+            order_type = "MARKET"
+
         # Price for LIMIT (current_price with small offset bps to improve fill odds)
         price_offset_bps = float(self.orders_cfg.get("price_offset_bps", 5.0))
         if action == "BUY":
@@ -399,7 +422,6 @@ class LiveExecutor:
 
         # ---- Sizing ----
         if action == "BUY":
-            # Use quote balance (USDT) for buy sizing
             quote_free = self._get_free_balance(account, quote_asset)
             if quote_free <= 0:
                 result = {
@@ -415,16 +437,13 @@ class LiveExecutor:
                 self.record_trade(result)
                 return result
 
-            # Cash buffer (risk)
             cash_buffer = float((self.config.get("risk", {}) or {}).get("cash_buffer", 0.40))
             cash_buffer = max(0.0, min(0.95, cash_buffer))
             max_investable = quote_free * (1.0 - cash_buffer)
 
-            # Base target value in quote currency
             order_value = quote_free * float(target_weight)
             order_value = min(order_value, max_investable)
 
-            # Hard cap per order
             max_order = float(((self.config.get("execution", {}) or {}).get("trade", {}) or {}).get("max_order_value_usdt", 1e18))
             order_value = min(order_value, max_order)
 
@@ -517,7 +536,7 @@ class LiveExecutor:
                 "type": order_type,
                 "quantity": float(quantity),
                 "price": float(limit_price if order_type == "LIMIT" else current_price),
-                "status": "dry_run_success",
+                "status": "open",  # dry-run => treat as would-place
                 "est_notional": float(est_notional),
                 "stepSize": step_str,
                 "tickSize": tick_str,
@@ -543,6 +562,9 @@ class LiveExecutor:
                 price=price_str,
             )
 
+            order_status = order.get("status")
+            status_norm = _norm_order_status(order_status)
+
             result = {
                 "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "mode": "trade_live",
@@ -554,7 +576,8 @@ class LiveExecutor:
                 "type": order.get("type"),
                 "quantity": order.get("origQty"),
                 "price": order.get("price"),
-                "status": order.get("status"),
+                "order_status": order_status,   # raw from Binance
+                "status": status_norm,          # <<< PATCH: stable for engine
                 "est_notional": float(est_notional),
                 "stepSize": step_str,
                 "tickSize": tick_str,
