@@ -3,10 +3,10 @@ api_keys:
   binance:
     api_key: ""  # Se vazio, usa BINANCE_API_KEY env var
     api_secret: ""  # Se vazio, usa BINANCE_API_SECRET env var
-  
+
   cryptopanic:
     token: ""  # Se vazio, usa CRYPTOPANIC_TOKEN env var
-  
+
   openai:
     api_key: ""  # Se vazio, usa OPENAI_API_KEY env var
     model: "gpt-4o-mini"  # Se vazio, usa OPENAI_MODEL env var ou default
@@ -21,12 +21,12 @@ execution:
   decision_every_minutes: 15
   loop_seconds: 60
   timezone: "UTC"
-  
+
   paper:
     initial_balance_usdt: 10000
     enable_slippage: true
     slippage_bps: 5
-  
+
   trade:
     dry_run: false  # Se true, simula mas não envia ordens
     max_order_value_usdt: 1000  # Limite por ordem em modo trade
@@ -39,7 +39,7 @@ exchange:
   use_testnet: false
   recv_window: 5000
   timeout_seconds: 30
-  
+
   orders:
     default_type: "LIMIT"  # LIMIT | MARKET
     limit_ttl_seconds: 30
@@ -62,7 +62,11 @@ positioning:
   weight_per_position: 0.30
   cash_buffer: 0.40
 
+# -----------------------------
+# MOMENTUM (Melhorado)
+# -----------------------------
 momentum:
+  # Mantém teus parâmetros atuais (compatibilidade com código legado)
   n_days_short: 182
   n_days_long: 365
   min_momentum_idade: 0
@@ -72,6 +76,32 @@ momentum:
     - {max_days: 456, factor: 0.75}
     - {max_days: 547, factor: 0.50}
     - {max_days: 9999, factor: 0.25}
+
+  # ---- Novos campos usados pelo compute_momentum_features() melhorado ----
+  interval_1d: "1d"
+
+  # Importante: no código atual isso é BAR COUNT via LIMIT (não "dias de calendário")
+  # Eu amarrei com teus n_days_short/long (182/365) para ficar coerente.
+  lookback_6m_days: 182
+  lookback_12m_days: 365
+
+  # +60 candles extras para medir "quando o momentum virou positivo"
+  age_extra_bars: 60
+
+  # Mínimos de pontos exigidos para considerar cálculo confiável
+  # (ajuste se teu backfill tiver menos candles)
+  min_points: 120
+  min_points_6m: 120
+  min_points_12m: 240
+
+  # Clamp do sigma para evitar "explosão" quando volatilidade ~ 0
+  min_sigma: 1e-12
+
+  # Gate opcional: exigir também m12 > 0 (deixe false por padrão)
+  require_m12_positive: false
+
+  # Como você exige delta positivo, threshold em 0.0 resolve (delta_m > 0)
+  delta_threshold: 0.0
 
 # Legacy momentum (dual-period) parameters kept for compatibility
 momentum2:
@@ -86,11 +116,11 @@ news:
   volspike_soft: 1.5
   volspike_hard: 1.8
   cooldown_hours_hard: 6
-  
+
   cryptopanic:
     enabled: true
     request_timeout_s: 10
-  
+
   openai:
     enabled: true
     request_timeout_s: 25
