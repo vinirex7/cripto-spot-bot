@@ -1,10 +1,10 @@
-"""Bot engine integrating all components."""
+# bot/engine.py
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from bot.utils import write_jsonl
 from bot.storage import HistoryStore
-from bot.positions import PositionStore  # <<< ADICIONADO
+from bot.positions import PositionStore
 from news.engine import NewsEngine
 from risk.guards import RiskGuards
 from signals.momentum import compute_momentum_features
@@ -12,8 +12,6 @@ from execution.orders import create_executor
 
 
 class BotEngine:
-    """Main bot engine coordinating all components."""
-    
     def __init__(
         self,
         config: Dict[str, Any],
@@ -27,46 +25,47 @@ class BotEngine:
         self.risk_guards = risk_guards
         self.logs_cfg = config.get("logging", {})
 
-        # <<< ADICIONADO: store simples de posição (entry/peak) >>>
         self.pos_store = PositionStore(
             self.logs_cfg.get("files", {}).get("positions", "logs/positions.json")
         )
-
         self.executor = create_executor(config)
 
     def step(self, slot: str, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
         symbols = self.config.get("universe", [])
         results: List[Dict[str, Any]] = []
-        
+
+        # --- EXIT PARAMS (configuráveis) ---
+        exit_cfg = (self.config.get("exit", {}) or {})
+        takeprofit_mult = float(exit_cfg.get("takeprofit_mult", 1.8))  # 1.8x
+
+        # trailing_dd: fração do topo (0.12 = 12%)
+        trail_dd_raw = float(exit_cfg.get("trailing_dd", 0.12))
+        trail_dd = max(0.0, min(0.95, trail_dd_raw))  # clamp defensivo
+
         for symbol in symbols:
-            # ---- Current price (precisa pra BUY e SELL) ----
             recent = self.history_store.fetch_ohlcv("1h", symbol, limit=1)
             current_price = recent[-1][4] if recent else 0.0
 
-            # ---- Features ----
             features = compute_momentum_features(
                 self.history_store,
                 symbol,
                 self.config.get("momentum", {}),
             )
-            
+
             news_status = self.news_engine.current_status()
             risk_ctx = self.risk_guards.evaluate(symbol, features, news_status)
 
-            # ---- Position state ----
             pos = self.pos_store.get(symbol)
             in_position = bool(pos.get("in_position", False))
             entry_price = float(pos.get("entry_price", 0.0))
             peak_price = float(pos.get("peak_price", 0.0))
 
-            # Atualiza topo se estiver posicionado
+            # Atualiza topo
             if in_position and current_price > 0.0:
                 self.pos_store.on_tick(symbol, current_price)
-                pos = self.pos_store.get(symbol)
-                peak_price = float(pos.get("peak_price", peak_price))
+                peak_price = float(self.pos_store.get(symbol).get("peak_price", peak_price))
 
-            # Defaults
             target_weight = 0.0
             action = "HOLD"
             regime = "blocked"
@@ -78,26 +77,34 @@ class BotEngine:
             sell_reason = None
 
             if in_position and current_price > 0.0:
-                m6 = float(features.get("m_6", 0.0)) if features else 0.0
+                m6 = float((features or {}).get("m_6", 0.0))
 
                 # 1) SELL se Momentum < 0
-                if features and (m6 < 0.0):
+                if m6 < 0.0:
                     sell_reason = f"SELL | m6<0 | m6={m6:.2f}"
 
                 # 2) SELL se preço >= 1.8x entry
-                elif entry_price > 0.0 and current_price >= 1.8 * entry_price:
+                elif entry_price > 0.0 and current_price >= takeprofit_mult * entry_price:
                     sell_reason = (
-                        f"SELL | takeprofit 1.8x | "
+                        f"SELL | takeprofit {takeprofit_mult:.2f}x | "
                         f"px={current_price:.6f} entry={entry_price:.6f}"
                     )
 
-                # 3) SELL se preço <= -12% do topo (trailing)
-                elif peak_price > 0.0 and current_price <= 0.88 * peak_price:
-                    dd = (current_price / peak_price) - 1.0
-                    sell_reason = (
-                        f"SELL | trailing -12% | "
-                        f"px={current_price:.6f} peak={peak_price:.6f} dd={dd:.2%}"
-                    )
+                # 3) SELL exatamente a -trail_dd do topo:
+                #    Regra: current_price <= peak_price * (1 - trail_dd)
+                elif peak_price > 0.0:
+                    floor_price = peak_price * (1.0 - trail_dd)
+
+                    if current_price <= floor_price:
+                        # dd em % real (ex.: -12.0), só pra log humano
+                        dd_pct = (current_price / peak_price - 1.0) * 100.0
+
+                        sell_reason = (
+                            f"SELL | trailing stop | "
+                            f"rule: px <= peak*(1-{trail_dd:.0%}) | "
+                            f"px={current_price:.6f} peak={peak_price:.6f} "
+                            f"floor={floor_price:.6f} dd={dd_pct:.1f}%"
+                        )
 
             if sell_reason:
                 action = "SELL"
@@ -106,93 +113,84 @@ class BotEngine:
                 reason = sell_reason
 
             # -------------------------
-            # BUY logic (somente se NÃO estiver em posição e não for SELL)
+            # BUY logic
             # -------------------------
             if action == "HOLD":
-                # Se já está comprado, não compra de novo
                 if in_position:
                     regime = "in_position"
                     reason = "Already in position; holding unless SELL triggers"
                 else:
-                    if features and risk_ctx.get("risk_multiplier", 0.0) > 0.0:
+                    if features and float(risk_ctx.get("risk_multiplier", 0.0)) > 0.0:
                         m6 = float(features.get("m_6", 0.0))
                         m12 = float(features.get("m_12", 0.0))
                         delta_m = float(features.get("delta_m", 0.0))
                         m_age = float(features.get("m_age", 0.0))
 
-                        # ---- Config / thresholds ----
-                        weight_per_position = self.config.get("risk", {}).get("weight_per_position", 0.0)
+                        weight_per_position = float(
+                            (self.config.get("risk", {}) or {}).get("weight_per_position", 0.0)
+                        )
 
                         REV_M6_MIN = 1.0
-                        REV_AGE_MIN = 270.0        # ~9 meses
-                        REV_WEIGHT_FACTOR = 0.35  # peso reduzido em reversão
+                        REV_AGE_MIN = 270.0
+                        REV_WEIGHT_FACTOR = 0.35
                         EPS = 1e-9
 
-                        # ---- Regimes ----
                         trend_ok = (m12 > 0.0) and (m6 > 0.0) and (delta_m > 0.0)
-
                         delta_norm = delta_m / (abs(m12) + EPS)
 
                         strong_reversal_ok = (
-                            (m12 <= 0.0) and
-                            (m6 >= REV_M6_MIN) and
-                            (delta_norm >= 1.0) and
-                            (m_age >= REV_AGE_MIN)
+                            (m12 <= 0.0)
+                            and (m6 >= REV_M6_MIN)
+                            and (delta_norm >= 1.0)
+                            and (m_age >= REV_AGE_MIN)
                         )
 
                         if trend_ok:
                             regime = "trend"
                             base_weight = weight_per_position
                             reason = (
-                                f"Momentum ok (trend) | "
-                                f"m6={m6:.2f}, m12={m12:.2f}, Δm={delta_m:.2f}, age={m_age:.0f}"
+                                f"Momentum ok (trend) | m6={m6:.2f}, m12={m12:.2f}, "
+                                f"Δm={delta_m:.2f}, age={m_age:.0f}"
                             )
-
                         elif strong_reversal_ok:
                             regime = "early_reversal"
                             base_weight = weight_per_position * REV_WEIGHT_FACTOR
                             reason = (
-                                f"Momentum ok (early reversal) | "
-                                f"m6={m6:.2f}, m12={m12:.2f}, Δm={delta_m:.2f}, "
-                                f"Δm_norm={delta_norm:.2f}, age={m_age:.0f}"
+                                f"Momentum ok (early reversal) | m6={m6:.2f}, m12={m12:.2f}, "
+                                f"Δm={delta_m:.2f}, Δm_norm={delta_norm:.2f}, age={m_age:.0f}"
                             )
-
                         else:
                             base_weight = 0.0
                             reason = (
-                                f"Momentum blocked | "
-                                f"m6={m6:.2f}, m12={m12:.2f}, Δm={delta_m:.2f}, "
-                                f"Δm_norm={delta_norm:.2f}, age={m_age:.0f}"
+                                f"Momentum blocked | m6={m6:.2f}, m12={m12:.2f}, "
+                                f"Δm={delta_m:.2f}, Δm_norm={delta_norm:.2f}, age={m_age:.0f}"
                             )
 
                         target_weight = base_weight * float(risk_ctx.get("risk_multiplier", 1.0))
-
                         if target_weight > 0.0:
                             action = "BUY"
 
             # ---- Execution ----
             execution_result = None
             if action != "HOLD" and current_price > 0.0:
-                execution_result = self.executor.execute(
-                    symbol, action, target_weight, current_price
+                execution_result = self.executor.execute(symbol, action, target_weight, current_price)
+
+                status = (
+                    str((execution_result or {}).get("status", "")).lower()
+                    if isinstance(execution_result, dict)
+                    else ""
                 )
+                filled = status == "filled"
 
-                # ---- Update position store on fills (best-effort) ----
-                status = ""
-                if isinstance(execution_result, dict):
-                    status = str(execution_result.get("status", "")).lower()
-
-                filled = status in ("filled", "success", "ok", "done")
-
-                # Se teu executor não retorna status, não quebra o bot:
-                # ele só não atualiza o estado automaticamente.
                 if filled:
                     if action == "BUY":
-                        self.pos_store.on_buy_filled(symbol, current_price)
+                        fill_price = float((execution_result or {}).get("avg_fill_price", 0.0)) or float(
+                            current_price
+                        )
+                        self.pos_store.on_buy_filled(symbol, fill_price)
                     elif action == "SELL":
                         self.pos_store.on_sell_filled(symbol)
 
-            # ---- Log ----
             decision = {
                 "ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "slot": slot,
@@ -208,14 +206,10 @@ class BotEngine:
                 "execution": execution_result,
             }
 
-            write_jsonl(
-                self._decisions_path(),
-                decision,
-                flush=self.logs_cfg.get("flush_every_write", True),
-            )
+            write_jsonl(self._decisions_path(), decision, flush=self.logs_cfg.get("flush_every_write", True))
             results.append(decision)
 
         return results
-    
+
     def _decisions_path(self) -> str:
         return self.logs_cfg.get("files", {}).get("decisions", "logs/decisions.jsonl")
