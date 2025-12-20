@@ -54,7 +54,6 @@ universe:
   - SOLUSDT
   - LINKUSDT
   - AVAXUSDT
-  - MATICUSDT
   - ADAUSDT
 
 positioning:
@@ -81,7 +80,6 @@ momentum:
   interval_1d: "1d"
 
   # Importante: no código atual isso é BAR COUNT via LIMIT (não "dias de calendário")
-  # Eu amarrei com teus n_days_short/long (182/365) para ficar coerente.
   lookback_6m_days: 182
   lookback_12m_days: 365
 
@@ -89,7 +87,6 @@ momentum:
   age_extra_bars: 60
 
   # Mínimos de pontos exigidos para considerar cálculo confiável
-  # (ajuste se teu backfill tiver menos candles)
   min_points: 120
   min_points_6m: 120
   min_points_12m: 240
@@ -108,7 +105,22 @@ momentum2:
   n_days_short: 180
   n_days_long: 365
 
+# -----------------------------
+# NEWS (Atualizado para LLM + TTL/Decay + CryptoPanic v2)
+# -----------------------------
 news:
+  # --- NOVO (usado pelo news/engine.py) ---
+  lookback_hours: 12
+
+  # thresholds em escala [-1, 1] (LLM)
+  llm_hard_threshold: -0.6
+  llm_soft_threshold: -0.3
+
+  # cache/decay do LLM
+  analysis_cache_ttl_minutes: 180
+  decay_half_life_minutes: 180
+
+  # --- LEGADO (mantido para não quebrar outros módulos que ainda leiam isso) ---
   sentz_hard: -3.0
   priceshockz_hard: -3.0
   ns_hard: -2.5
@@ -121,9 +133,20 @@ news:
     enabled: true
     request_timeout_s: 10
 
+    # NOVO (pedido): hot + limit 50
+    filter: "hot"
+    limit: 50
+
+    # (informativo) endpoint v2 é usado no código:
+    # https://cryptopanic.com/api/developer/v2/posts/?auth_token=...
+
   openai:
     enabled: true
     request_timeout_s: 25
+
+    # opcional: tuning do Responses API
+    temperature: 0.2
+    max_output_tokens: 250
 
 microstructure:
   ofi_z_entry: 2.0
