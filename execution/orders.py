@@ -13,6 +13,11 @@ PATCH for your new SELL rules:
 - Normalize returned status to: "filled" | "open" | "skipped" | "error"
   (engine/PositionStore can reliably detect fills).
 - PaperExecutor now returns "filled"/"skipped" instead of "simulated".
+
+FIX (dust / already-in-position bug):
+- "Already in position" is determined by notional (qty * price) >= position_min_notional_usdt
+  instead of base_total > epsilon.
+- Default position_min_notional_usdt = 5.0, configurable + per-symbol overrides.
 """
 
 from __future__ import annotations
@@ -120,7 +125,7 @@ class PaperExecutor:
             "action": action,
             "target_weight": float(target_weight),
             "price": float(current_price),
-            "status": "filled",  # <<< PATCH: engine/PositionStore likes stable statuses
+            "status": "filled",  # stable statuses
         }
 
         if current_price <= 0:
@@ -156,6 +161,16 @@ class PaperExecutor:
         self.record_trade(result)
         return result
 
+    def snapshot_symbol_state(self, symbol: str, current_price: float) -> Dict[str, Any]:
+        """Best-effort snapshot for restart-safe state (paper mode)."""
+        qty = float(self.positions.get(symbol, 0.0))
+        return {
+            "source": "paper",
+            "qty": qty,
+            "notional_usdt": float(qty) * float(current_price or 0.0),
+            "open_orders": {"count": 0, "ids": []},
+        }
+
 
 # -----------------------------
 # Live executor
@@ -174,9 +189,15 @@ class LiveExecutor:
         self.prevent_duplicate_entries = bool(self.orders_cfg.get("prevent_duplicate_entries", True))
         self.prevent_if_open_orders = bool(self.orders_cfg.get("prevent_if_open_orders", True))
         self.cancel_open_buys_before_sell = bool(self.orders_cfg.get("cancel_open_buys_before_sell", True))
-        self.position_epsilon = float(self.orders_cfg.get("position_epsilon", 1e-12))  # tiny threshold
+        self.position_epsilon = float(self.orders_cfg.get("position_epsilon", 1e-12))  # tiny threshold (qty space)
 
-        # <<< PATCH: for your SELL rules, we want exits to actually happen
+        # FIX: ignore dust when deciding "already in position"
+        # Use notional threshold in USDT (qty * price) instead of qty epsilon.
+        # Default 5 USDT (safe for most spot symbols), configurable.
+        self.position_min_notional_usdt = float(self.orders_cfg.get("position_min_notional_usdt", 5.0))
+        self.position_min_notional_overrides = self.orders_cfg.get("position_min_notional_overrides", {}) or {}
+
+        # For your SELL rules, we want exits to actually happen
         self.force_market_sell = bool(self.orders_cfg.get("force_market_sell", True))
 
     def _trades_path(self) -> str:
@@ -218,6 +239,42 @@ class LiveExecutor:
                 if base and quote:
                     return base, quote
         raise ValueError(f"Symbol not found in exchangeInfo: {symbol}")
+
+    def _pos_min_notional(self, symbol: str) -> float:
+        try:
+            v = self.position_min_notional_overrides.get(symbol)
+            if v is not None:
+                return float(v)
+        except Exception:
+            pass
+        return float(self.position_min_notional_usdt)
+
+    def snapshot_symbol_state(self, symbol: str, current_price: float) -> Dict[str, Any]:
+        """Snapshot balances + open orders so the engine can persist state every loop."""
+        base_asset, _quote_asset = self._symbol_assets(symbol)
+        account = self.client.get_account()
+        base_total = self._get_total_balance(account, base_asset)
+        base_free = self._get_free_balance(account, base_asset)
+        open_orders = []
+        try:
+            open_orders = self._get_open_orders(symbol)
+        except Exception:
+            open_orders = []
+
+        ids = []
+        for o in open_orders or []:
+            oid = o.get("orderId")
+            if oid is not None:
+                ids.append(oid)
+        return {
+            "source": "exchange",
+            "base_asset": base_asset,
+            "qty": float(base_total),
+            "qty_free": float(base_free),
+            "notional_usdt": float(base_total) * float(current_price or 0.0),
+            "pos_min_notional_usdt": float(self._pos_min_notional(symbol)),
+            "open_orders": {"count": len(open_orders or []), "ids": ids[:25]},
+        }
 
     def _get_open_orders(self, symbol: str) -> List[Dict[str, Any]]:
         # Uses private client._request for signed endpoint
@@ -278,7 +335,7 @@ class LiveExecutor:
             try:
                 open_orders = self._get_open_orders(symbol)
             except Exception as e:
-                # If we can't read open orders, fail-safe: do NOT trade
+                # fail-safe: do NOT trade
                 result = {
                     "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "mode": "trade_dry_run" if self.dry_run else "trade_live",
@@ -292,7 +349,7 @@ class LiveExecutor:
                 return result
 
             if open_orders:
-                # Optionally: if SELL and there are open BUYs, cancel them first
+                # if SELL and there are open BUYs, cancel them first
                 if action == "SELL" and self.cancel_open_buys_before_sell:
                     cancelled: List[Any] = []
                     for o in open_orders:
@@ -302,7 +359,7 @@ class LiveExecutor:
                                 cancelled.append(o.get("orderId"))
                             except Exception:
                                 pass
-                    # Re-check after cancels
+                    # Re-check
                     try:
                         open_orders = self._get_open_orders(symbol)
                     except Exception:
@@ -335,22 +392,30 @@ class LiveExecutor:
                     return result
 
         # Position guard: don't BUY if you already hold base asset (prevents pyramiding by default)
+        # IMPORTANT: use USDT notional threshold to ignore dust balances.
         base_total = self._get_total_balance(account, base_asset)
         base_free = self._get_free_balance(account, base_asset)
 
-        if action == "BUY" and self.prevent_duplicate_entries and base_total > self.position_epsilon:
-            result = {
-                "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "mode": "trade_dry_run" if self.dry_run else "trade_live",
-                "symbol": symbol,
-                "action": action,
-                "status": "skipped",
-                "reason": "Already in position (base asset balance > 0)",
-                "base_asset": base_asset,
-                "base_total": float(base_total),
-            }
-            self.record_trade(result)
-            return result
+        if action == "BUY" and self.prevent_duplicate_entries:
+            pos_min_notional = float(self._pos_min_notional(symbol))
+            base_notional = float(base_total) * float(current_price)
+            if base_total > self.position_epsilon and base_notional >= pos_min_notional:
+                result = {
+                    "ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "mode": "trade_dry_run" if self.dry_run else "trade_live",
+                    "symbol": symbol,
+                    "action": action,
+                    "status": "skipped",
+                    "reason": "Already in position (base notional >= threshold)",
+                    "base_asset": base_asset,
+                    "base_total": float(base_total),
+                    "base_notional_usdt": float(base_notional),
+                    "position_min_notional_usdt": float(pos_min_notional),
+                }
+                self.record_trade(result)
+                return result
+
+            # Dust case: treat as not in position; allow BUY.
 
         # For SELL: sell what you actually have (free balance), optionally fraction
         sell_fraction = float(self.orders_cfg.get("sell_fraction", 1.0))
@@ -404,7 +469,7 @@ class LiveExecutor:
         if order_type not in ("LIMIT", "MARKET"):
             order_type = "LIMIT"
 
-        # <<< PATCH: force MARKET for SELL exits (recommended for your strategy)
+        # Force MARKET for SELL exits (recommended)
         if action == "SELL" and self.force_market_sell:
             order_type = "MARKET"
 
@@ -536,7 +601,7 @@ class LiveExecutor:
                 "type": order_type,
                 "quantity": float(quantity),
                 "price": float(limit_price if order_type == "LIMIT" else current_price),
-                "status": "open",  # dry-run => treat as would-place
+                "status": "open",  # would-place
                 "est_notional": float(est_notional),
                 "stepSize": step_str,
                 "tickSize": tick_str,
@@ -577,7 +642,7 @@ class LiveExecutor:
                 "quantity": order.get("origQty"),
                 "price": order.get("price"),
                 "order_status": order_status,   # raw from Binance
-                "status": status_norm,          # <<< PATCH: stable for engine
+                "status": status_norm,          # stable for engine
                 "est_notional": float(est_notional),
                 "stepSize": step_str,
                 "tickSize": tick_str,

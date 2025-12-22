@@ -4,15 +4,24 @@ import os
 import sys
 import time
 import sqlite3
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import yaml
 
-# Uses your existing client
 from execution.binance_client import BinanceSpotClient
 
 
-def interval_to_ms(interval: str) -> int:
+def parse_days(s: str) -> int:
+    s = str(s).strip().lower()
+    if s.isdigit():
+        return int(s)
+    if s.endswith("d"):
+        return int(s[:-1])
+    raise ValueError(f"Invalid days format: {s}")
+
+
+def parse_interval_ms(interval: str) -> int:
+    """Convert Binance interval string to milliseconds."""
     s = interval.strip().lower()
     if s.endswith("m"):
         return int(s[:-1]) * 60_000
@@ -21,49 +30,6 @@ def interval_to_ms(interval: str) -> int:
     if s.endswith("d"):
         return int(s[:-1]) * 86_400_000
     raise ValueError(f"Unsupported interval: {interval}")
-
-
-def ensure_schema(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS ohlcv (
-            symbol TEXT NOT NULL,
-            interval TEXT NOT NULL,
-            open_time_ms INTEGER NOT NULL,
-            open REAL NOT NULL,
-            high REAL NOT NULL,
-            low REAL NOT NULL,
-            close REAL NOT NULL,
-            volume REAL NOT NULL,
-            PRIMARY KEY (symbol, interval, open_time_ms)
-        );
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ohlcv_si_ot ON ohlcv(symbol, interval, open_time_ms);")
-    conn.commit()
-
-
-def upsert(conn: sqlite3.Connection, symbol: str, interval: str, rows: List[List[float]]) -> int:
-    if not rows:
-        return 0
-    payload = []
-    for r in rows:
-        if len(r) < 6:
-            continue
-        payload.append((symbol, interval, int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])))
-    if not payload:
-        return 0
-
-    conn.executemany(
-        """
-        INSERT OR REPLACE INTO ohlcv
-        (symbol, interval, open_time_ms, open, high, low, close, volume)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-        """,
-        payload,
-    )
-    conn.commit()
-    return len(payload)
 
 
 def normalize_klines(klines: List[List[Any]]) -> List[List[float]]:
@@ -82,12 +48,52 @@ def get_latest_open_time(conn: sqlite3.Connection, symbol: str, interval: str) -
         "SELECT MAX(open_time_ms) FROM ohlcv WHERE symbol=? AND interval=?;",
         (symbol, interval),
     )
-    v = cur.fetchone()[0]
+    row = cur.fetchone()
+    if not row:
+        return None
+    v = row[0]
     return int(v) if v is not None else None
 
 
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ohlcv (
+            symbol TEXT NOT NULL,
+            interval TEXT NOT NULL,
+            open_time_ms INTEGER NOT NULL,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume REAL NOT NULL,
+            PRIMARY KEY (symbol, interval, open_time_ms)
+        );
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_interval_time ON ohlcv(symbol, interval, open_time_ms);")
+    conn.commit()
+
+
+def upsert(conn: sqlite3.Connection, symbol: str, interval: str, rows: List[List[float]]) -> int:
+    if not rows:
+        return 0
+    cur = conn.cursor()
+    cur.executemany(
+        """
+        INSERT OR REPLACE INTO ohlcv
+        (symbol, interval, open_time_ms, open, high, low, close, volume)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        """,
+        [(symbol, interval, int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])) for r in rows],
+    )
+    conn.commit()
+    return len(rows)
+
+
 def load_config(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r") as f:
         return yaml.safe_load(f) or {}
 
 
@@ -107,8 +113,14 @@ def universe(cfg: Dict[str, Any]) -> List[str]:
     u2 = (cfg.get("bot", {}) or {}).get("universe")
     if isinstance(u2, list) and u2:
         return [str(x).strip().upper() for x in u2 if str(x).strip()]
-    # last resort
     return ["BTCUSDT", "ETHUSDT"]
+
+
+def get_sqlite_path(cfg: Dict[str, Any]) -> str:
+    # Prefer storage.sqlite_path; fallback to ./data/marketdata.sqlite
+    storage = cfg.get("storage", {}) or {}
+    p = storage.get("sqlite_path") or "./data/marketdata.sqlite"
+    return str(p)
 
 
 def backfill_symbol(
@@ -117,28 +129,33 @@ def backfill_symbol(
     symbol: str,
     interval: str,
     lookback_days: int,
-    max_per_call: int = 1000,
 ) -> int:
-    ms = interval_to_ms(interval)
+    ms = parse_interval_ms(interval)
     now_ms = int(time.time() * 1000)
 
-    # Determine start_time
     existing_latest = get_latest_open_time(conn, symbol, interval)
     if existing_latest is None:
+        # full backfill
         start_ms = now_ms - (lookback_days * 86_400_000)
     else:
         # incremental: start right after last stored candle
         start_ms = existing_latest + ms
 
+    max_per_call = 1000
     total = 0
     # Loop pulling until "now"
     while start_ms < now_ms:
-        klines = client.get_klines(
-            symbol=symbol,
-            interval=interval,
-            limit=max_per_call,
-            start_time=start_ms,
-            end_time=now_ms,
+        klines = client._request(
+            method="GET",
+            endpoint="/api/v3/klines",
+            signed=False,
+            params={
+                "symbol": symbol,
+                "interval": interval,
+                "limit": max_per_call,
+                "startTime": start_ms,
+                "endTime": now_ms,
+            },
         )
         rows = normalize_klines(klines)
         if not rows:
@@ -149,15 +166,12 @@ def backfill_symbol(
         # advance start_ms to last candle + interval
         last_timestamp = int(rows[-1][0])
         new_start_ms = last_timestamp + ms
-        
+
         # Safety: if API returns same last timestamp, avoid infinite loop
         if new_start_ms <= start_ms:
             break
-        
-        start_ms = new_start_ms
 
-        # small sleep to avoid hammering
-        time.sleep(0.2)
+        start_ms = new_start_ms
 
     return total
 
@@ -167,38 +181,40 @@ def main() -> int:
         print("Usage: python3 tools/bootstrap_history.py <config.yaml>")
         return 2
 
-    cfg = load_config(sys.argv[1])
-    db_path = (cfg.get("storage", {}) or {}).get("sqlite_path", "./bot.db")
+    cfg_path = sys.argv[1]
+    cfg = load_config(cfg_path)
 
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    ensure_schema(conn)
+    sqlite_path = get_sqlite_path(cfg)
+    os.makedirs(os.path.dirname(sqlite_path) or ".", exist_ok=True)
 
-    client = make_client(cfg)
+    print(f"DB: {sqlite_path}")
 
-    # defaults: 12 months 1d (~420d) and 6 months 1h (~180d)
-    lookback_1d_days = int(((cfg.get("history", {}) or {}).get("lookback_1d_days") or 420))
-    lookback_1h_days = int(((cfg.get("history", {}) or {}).get("lookback_1h_days") or 180))
+    u = universe(cfg)
+    print(f"Universe: {u}")
 
-    syms = universe(cfg)
+    # Defaults from config, with safe fallbacks
+    mom_cfg = cfg.get("momentum", {}) or {}
+    lookback_1d_days = int(mom_cfg.get("lookback_days_1d", 420) or 420)
+    lookback_1h_days = int(mom_cfg.get("lookback_days_1h", 180) or 180)
 
-    print(f"DB: {db_path}")
-    print(f"Universe: {syms}")
     print(f"Backfill: 1d={lookback_1d_days} days | 1h={lookback_1h_days} days")
 
-    total_rows = 0
-    for s in syms:
-        print(f"\n== {s} ==")
-        n1 = backfill_symbol(client, conn, s, "1d", lookback_1d_days)
-        print(f"  1d upserts: {n1}")
-        n2 = backfill_symbol(client, conn, s, "1h", lookback_1h_days)
-        print(f"  1h upserts: {n2}")
-        total_rows += (n1 + n2)
+    client = make_client(cfg)
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        ensure_schema(conn)
 
-    print(f"\nDone. Total upserts: {total_rows}")
-    conn.close()
-    return 0
+        for sym in u:
+            print(f"\n== {sym} ==")
+            n1 = backfill_symbol(client, conn, sym, "1d", lookback_1d_days)
+            print(f"[1d] upserted={n1}")
+            n2 = backfill_symbol(client, conn, sym, "1h", lookback_1h_days)
+            print(f"[1h] upserted={n2}")
+
+        print("\nDONE")
+        return 0
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

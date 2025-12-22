@@ -71,7 +71,8 @@ def fetch_news(now: datetime, config: Dict[str, Any]) -> List[Dict[str, Any]]:
     lookback_hours = _clamp(lookback_hours, 1.0, 72.0)
     lookback_seconds = lookback_hours * 3600.0
 
-    url="https://cryptopanic.com/api/developer/v2"
+
+    url="https://cryptopanic.com/api/developer/v2/posts/"
     params = {
         "auth_token": token,
         "public": "true",

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from bot.utils import write_jsonl
 from bot.storage import HistoryStore
-from bot.positions import PositionStore
+from bot.position import PositionStore
 from news.engine import NewsEngine
 from risk.guards import RiskGuards
 from signals.momentum import compute_momentum_features
@@ -43,9 +43,41 @@ class BotEngine:
         trail_dd_raw = float(exit_cfg.get("trailing_dd", 0.12))
         trail_dd = max(0.0, min(0.95, trail_dd_raw))  # clamp defensivo
 
+        # Position min notional: used to ignore dust when deciding "in position"
+        orders_cfg = (self.config.get("exchange", {}) or {}).get("orders", {}) or {}
+        default_pos_min_notional = float(orders_cfg.get("position_min_notional_usdt", 5.0))
+        per_symbol_pos_min = orders_cfg.get("position_min_notional_overrides", {}) or {}
+
         for symbol in symbols:
             recent = self.history_store.fetch_ohlcv("1h", symbol, limit=1)
             current_price = recent[-1][4] if recent else 0.0
+
+            # ------------------------------------------------------------
+            # SYNC STATE ON EVERY WAKE
+            # - snapshot balances (qty) + open orders from executor
+            # - persist with timestamps so a restart doesn't lose context
+            # ------------------------------------------------------------
+            pos_min_notional = float(per_symbol_pos_min.get(symbol, default_pos_min_notional))
+
+            try:
+                snap = None
+                if hasattr(self.executor, "snapshot_symbol_state"):
+                    snap = self.executor.snapshot_symbol_state(symbol, current_price)  # type: ignore[attr-defined]
+                if isinstance(snap, dict):
+                    qty = float(snap.get("qty", 0.0))
+                    open_orders_summary = snap.get("open_orders")
+                    self.pos_store.sync_snapshot(
+                        symbol,
+                        qty=qty,
+                        current_price=float(current_price),
+                        position_min_notional_usdt=pos_min_notional,
+                        ts=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        source=str(snap.get("source", "exchange")),
+                        open_order_summary=open_orders_summary if isinstance(open_orders_summary, dict) else None,
+                    )
+            except Exception:
+                # Never break the whole engine if the sync fails.
+                pass
 
             features = compute_momentum_features(
                 self.history_store,
@@ -185,11 +217,41 @@ class BotEngine:
                 if filled:
                     if action == "BUY":
                         fill_price = float((execution_result or {}).get("avg_fill_price", 0.0)) or float(
-                            current_price
-                        )
-                        self.pos_store.on_buy_filled(symbol, fill_price)
+                            (execution_result or {}).get("price", 0.0)
+                        ) or float(current_price)
+                        fill_qty = (execution_result or {}).get("quantity") or (execution_result or {}).get("origQty")
+                        try:
+                            fill_qty_f = float(fill_qty) if fill_qty is not None else None
+                        except Exception:
+                            fill_qty_f = None
+                        self.pos_store.on_buy_filled(symbol, fill_price, qty=fill_qty_f)
                     elif action == "SELL":
                         self.pos_store.on_sell_filled(symbol)
+
+                # Persist orders regardless of fill (so the bot remembers after restart)
+                if isinstance(execution_result, dict):
+                    o_id = execution_result.get("order_id") or execution_result.get("orderId")
+                    o_side = execution_result.get("side") or action
+                    o_type = execution_result.get("type") or execution_result.get("order_type") or execution_result.get("orderType")
+                    o_qty = execution_result.get("quantity") or execution_result.get("origQty")
+                    o_price = execution_result.get("price") or current_price
+                    o_status = str(execution_result.get("status") or "").lower()
+
+                    if o_id is not None and str(o_id) != "":
+                        pending = o_status in ("open", "new")
+                        self.pos_store.record_order(
+                            symbol,
+                            order_id=o_id,
+                            side=o_side,
+                            order_type=o_type or "",
+                            qty=o_qty,
+                            price=o_price,
+                            status=o_status,
+                            ts=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            pending=pending,
+                        )
+                        if not pending:
+                            self.pos_store.clear_pending(symbol, ts=now.strftime("%Y-%m-%dT%H:%M:%SZ"))
 
             decision = {
                 "ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
